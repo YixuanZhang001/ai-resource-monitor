@@ -1,0 +1,82 @@
+# PricingRegistry 数据源：provider → model → 价格
+# unit: per_1m_tokens （每 100 万 token 的价格）
+# 价格为公开刊例的近似默认值，请按各 Provider 官网最新价格修正。
+# effective_date 用于价格版本管理。
+
+deepseek:
+  currency: CNY
+  # DeepSeek V4 峰谷（北京时间 UTC+8，无夏令时）：9:00-12:00 / 14:00-18:00 高峰
+  peak:
+    hours: [[9, 12], [14, 18]]
+  models:
+    deepseek-chat:      { input: 2.0,  output: 8.0,  effective_date: "2025-09-01" }
+    deepseek-reasoner:  { input: 4.0,  output: 16.0, effective_date: "2025-09-01" }
+    # V4 定价（2026-08-17 官方公布，yuan / 1M tokens）
+    deepseek-v4-flash:
+      input: 1.5          # 缓存未命中，低峰
+      output: 4.5
+      cache_hit: 0.05     # 缓存命中，低峰
+      peak: { input: 3.0, output: 9.0, cache_hit: 0.10 }
+      effective_date: "2026-08-17"
+    deepseek-v4-pro:
+      input: 4.5
+      output: 13.5
+      cache_hit: 0.15
+      peak: { input: 9.0, output: 27.0, cache_hit: 0.30 }
+      effective_date: "2026-08-17"
+
+openai:
+  currency: USD
+  models:
+    gpt-4o:        { input: 2.5,  output: 10.0, effective_date: "2025-01-01" }
+    gpt-4o-mini:   { input: 0.15, output: 0.6,  effective_date: "2025-01-01" }
+    gpt-4.1:       { input: 2.0,  output: 8.0,  effective_date: "2025-04-01" }
+    gpt-4.1-mini:  { input: 0.4,  output: 1.6,  effective_date: "2025-04-01" }
+    o4-mini:       { input: 1.1,  output: 4.4,  effective_date: "2025-04-01" }
+
+kimi:
+  currency: CNY
+  models:
+    kimi-k2-0905-preview: { input: 4.0,  output: 16.0, effective_date: "2025-09-01" }
+    kimi-k2:              { input: 4.0,  output: 16.0, effective_date: "2025-07-01" }
+    moonshot-v1-8k:       { input: 12.0, output: 12.0, effective_date: "2024-01-01" }
+    moonshot-v1-32k:      { input: 24.0, output: 24.0, effective_date: "2024-01-01" }
+    moonshot-v1-128k:     { input: 60.0, output: 60.0, effective_date: "2024-01-01" }
+
+minimax:
+  currency: CNY
+  models:
+    MiniMax-M2:      { input: 2.1, output: 8.4,  effective_date: "2025-10-01" }
+    MiniMax-M1:      { input: 0.8, output: 8.0,  effective_date: "2025-06-01" }
+    abab6.5s-chat:   { input: 1.0, output: 1.0,  effective_date: "2024-06-01" }
+
+gemini:
+  currency: USD
+  models:
+    gemini-2.5-pro:    { input: 1.25, output: 10.0, effective_date: "2025-06-01" }
+    gemini-2.5-flash:  { input: 0.3,  output: 2.5,  effective_date: "2025-06-01" }
+    gemini-2.0-flash:  { input: 0.1,  output: 0.4,  effective_date: "2025-02-01" }
+
+openrouter:
+  currency: USD
+  models: {}
+
+groq:
+  currency: USD
+  models: {}
+
+zhipu:
+  currency: CNY
+  models:
+    glm-4.5:  { input: 2.0, output: 8.0,  effective_date: "2025-07-01" }
+    glm-4-flash: { input: 0.0, output: 0.0, effective_date: "2024-08-01" }
+
+qwen:
+  currency: CNY
+  models:
+    qwen-plus: { input: 0.8, output: 2.0, effective_date: "2025-01-01" }
+    qwen-max:  { input: 2.4, output: 9.6, effective_date: "2025-01-01" }
+
+doubao:
+  currency: CNY
+  models: {}

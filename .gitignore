@@ -1,0 +1,13 @@
+# API Key 安全：本地配置绝不入库
+data/config.yaml
+data/config.yml
+
+# 数据库永不入库（含备份与 WAL）
+data/*.db
+data/*.db-*
+data/backups/
+
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/

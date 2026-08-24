@@ -1,0 +1,35 @@
+# 复制为 data/config.yaml 并填入 API Key（或直接通过 Dashboard 配置）
+server:
+  host: 127.0.0.1
+  port: 8787
+
+providers:
+  openai:
+    enabled: false
+    base_url: https://api.openai.com
+    api_key: ""
+    test_model: gpt-4o-mini
+
+  deepseek:
+    enabled: false
+    base_url: https://api.deepseek.com
+    api_key: ""
+    test_model: deepseek-chat
+
+  kimi:
+    enabled: false
+    base_url: https://api.moonshot.cn
+    api_key: ""
+    test_model: kimi-k2-0905-preview
+
+  minimax:
+    enabled: false
+    base_url: https://api.minimaxi.com
+    api_key: ""
+    test_model: MiniMax-M2
+
+  gemini:
+    enabled: false
+    base_url: https://generativelanguage.googleapis.com
+    api_key: ""
+    test_model: gemini-2.5-flash
