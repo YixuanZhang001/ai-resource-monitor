@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import gateway
+from .collectors.deepseek import DeepSeekObservationCollector
 from .collectors.openrouter import OpenRouterObservationCollector
 from .config import ConfigManager
 from .core import MonitorCore
@@ -55,6 +56,9 @@ observation_collectors = ObservationCollectorRegistry()
 observation_collectors.register(
     "openrouter",
     OpenRouterObservationCollector(CredentialProvider()))
+observation_collectors.register(
+    "deepseek",
+    DeepSeekObservationCollector(CredentialProvider()))
 
 # 运行时 scheduler 引用（lifespan 注入；状态 API 只读）
 _scheduler: Optional[ObservationScheduler] = None

@@ -168,10 +168,10 @@ def test_registry_routing():
 
 
 def test_unknown_provider_no_collector_unavailable(app_env):
-    """auto observe：无 collector 的 provider → unavailable（不 500）。"""
+    """auto observe：无 collector 的 provider（gemini）→ unavailable（不 500）。"""
     c, m = app_env
-    # deepseek 资源无 collector
-    r = c.post("/api/resources/deepseek-res/observe", json={})
+    # gemini 资源无 collector（deepseek 已在 Phase 2C 注册 collector）
+    r = c.post("/api/resources/gemini-res/observe", json={})
     assert r.status_code == 200
     assert r.json()["observation_status"] == "unavailable"
     assert "no observation collector" in r.json()["error"]
@@ -234,6 +234,8 @@ def app_env(tmp_path, monkeypatch):
         "    base_url: 'http://up'\n    api_keys:\n    - sk-test\n"
         "resources:\n"
         "  deepseek-res:\n    provider: deepseek\n    resource_type: api\n"
+        "    billing_mode: prepaid\n"
+        "  gemini-res:\n    provider: gemini\n    resource_type: api\n"
         "    billing_mode: prepaid\n"
         "  or-res:\n    provider: openrouter\n    resource_type: api\n"
         "    billing_mode: prepaid\n    credential_id: openrouter\n",
