@@ -164,13 +164,19 @@ textarea:focus{outline:none;border-color:var(--cyan)}
     <div class="sect"><div class="sect-title">OVERVIEW · 我现在用了多少 AI 资源</div>
       <div class="grid cards" id="ov-cards"></div>
     </div>
-    <div class="grid" style="grid-template-columns:1fr 1fr">
-      <div class="sect"><div class="sect-title">COST BY PROVIDER</div><div class="panel" id="ov-provider"></div></div>
-      <div class="sect"><div class="sect-title">TOKEN TREND (14D)</div><div class="trend" id="ov-trend"></div>
-        <div class="legend"><span><i style="background:var(--cyan)"></i>INPUT</span><span><i style="background:var(--yellow)"></i>OUTPUT</span></div>
-      </div>
+  <div class="grid" style="grid-template-columns:1fr 1fr">
+    <div class="sect"><div class="sect-title">COST BY PROVIDER</div><div class="panel" id="ov-provider"></div></div>
+    <div class="sect"><div class="sect-title">TOKEN TREND (14D)</div><div class="trend" id="ov-trend"></div>
+      <div class="legend"><span><i style="background:var(--cyan)"></i>INPUT</span><span><i style="background:var(--yellow)"></i>OUTPUT</span></div>
     </div>
-  </section>
+  </div>
+  <div class="sect"><div class="sect-title">RECENT EVENTS</div>
+    <div style="overflow-x:auto"><table>
+      <thead><tr><th>Time</th><th>Resource</th><th>Provider</th><th>Model</th><th class="num">Tokens</th><th class="num">Cost</th><th class="num">Latency</th><th>Status</th></tr></thead>
+      <tbody id="ov-events"></tbody>
+    </table></div>
+  </div>
+</section>
 
   <section class="page" id="page-requests">
     <div class="sect"><div class="sect-title">REQUESTS · 具体调用发生了什么</div>
@@ -239,7 +245,7 @@ textarea:focus{outline:none;border-color:var(--cyan)}
     </div>
     <div class="sect"><div class="sect-title">RESOURCE INVENTORY</div>
       <div style="overflow-x:auto"><table>
-        <thead><tr><th>Resource</th><th>Provider</th><th>Type</th><th>Mode</th><th class="num">Requests</th><th class="num">Tokens</th><th class="num">Cache</th><th class="num">Errors</th><th class="num">Avg Latency</th><th>Cost</th><th>Status</th><th class="num">Balance</th><th class="num">Quota</th><th class="num">Remaining</th><th>Obs</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Resource</th><th>Provider</th><th>Type</th><th>Mode</th><th class="num">Requests</th><th class="num">Tokens</th><th class="num">Cache</th><th class="num">Errors</th><th class="num">Avg Latency</th><th>Cost</th><th>Status</th><th class="num">Balance</th><th class="num">Quota</th><th class="num">Remaining</th><th>Obs</th><th>Last Obs</th><th>Actions</th></tr></thead>
         <tbody id="res-body"></tbody>
       </table></div>
     </div>
@@ -345,18 +351,29 @@ function route(){
 }
 window.addEventListener('hashchange',route);
 
-/* ── Overview ── */
+/* ── Overview ──
+   顶部摘要固定取 TODAY 范围（符合"Today's Requests/Tokens/Cost/Errors"语义）；
+   下方 COST BY PROVIDER / TREND 仍随全局 RANGE 切换。
+   成本语义：cost_by_currency 为空（= 未知）→ 显示 —，绝不显示 0 / ¥0。 */
 async function renderOverview(){
-  const [ov,prov,trend]=await Promise.all([
-    get('/overview'),get('/analytics/cost',{dim:'provider'}),get('/analytics/tokens/timeseries',{days:14})]);
-  const cost=Object.entries(ov.cost_by_currency||{}).map(([c,v])=>fmt.money(v,c)+Number(v).toFixed(4)).join(' + ')||'¥0';
-  const avgLat=ov.requests?fmt.ms(ov.avg_latency_ms):'—';
+  const [ov,resU,prov,trend,ev]=await Promise.all([
+    get('/overview',{range:'today'}),
+    get('/resources/usage'),
+    get('/analytics/cost',{dim:'provider'}),
+    get('/analytics/tokens/timeseries',{days:14}),
+    get('/events',{limit:20})]);
+  const totalRes=(resU.resources||[]).length;
+  const costObj=ov.cost_by_currency||{};
+  const cost=Object.keys(costObj).length
+    ? Object.entries(costObj).map(([c,v])=>fmt.money(v,c)+Number(v).toFixed(4)).join(' + ')
+    : '—';                                  // NULL cost → —（不伪造 0）
+  const errs=ov.errors||0;
   $('#ov-cards').innerHTML=[
-    ['TOTAL REQUESTS',fmt.n(ov.requests),''],
-    ['TOTAL TOKENS',fmt.n(ov.total_tokens),''],
-    ['TOTAL COST',cost,''],
-    ['AVG LATENCY',avgLat,''],
-    ['ERROR RATE',fmt.pct(ov.error_rate),ov.error_rate>0.05?'v-red':ov.error_rate>0?'v-yellow':'v-green'],
+    ['TOTAL RESOURCES',fmt.n(totalRes),''],
+    ['TODAY REQUESTS',fmt.n(ov.requests),''],
+    ['TODAY TOKENS',fmt.n(ov.total_tokens),''],
+    ['TODAY COST',cost,cost==='—'?'v-dim':''],
+    ['TODAY ERRORS',fmt.n(errs),errs>0?'v-red':'v-green'],
   ].map(([lb,vl,cl])=>`<div class="card"><div class="lb">${lb}</div><div class="vl ${cl}">${vl}</div></div>`).join('');
   const rows=prov.rows||[];
   const max=Math.max(1,...rows.map(r=>r.cost??0));
@@ -366,6 +383,27 @@ async function renderOverview(){
   const tmax=Math.max(1,...tr.map(r=>r.total_tokens||0));
   $('#ov-trend').innerHTML=tr.length?tr.slice(-14).map(r=>`<div class="col" title="${r.day}"><div class="cb" style="height:${((r.input_tokens||0)/tmax*100).toFixed(1)}%"></div><div class="cb out" style="height:${((r.output_tokens||0)/tmax*100).toFixed(1)}%"></div><div class="cd">${r.day.slice(5)}</div></div>`).join('')
     :'<div class="empty" style="margin:auto">NO DATA<br><span style="color:var(--dim);font-size:11px">No AI requests recorded yet.</span></div>';
+  renderRecentEvents(ev.events||[]);
+}
+
+/* ── Recent Events（独立区块；数据源 /api/events，含 resource_id）──
+   失败调用：event_type 仍是 llm_call，用 status_code/error 表达；
+   tokens / cost 为 NULL 时显示 —，绝不转 0。 */
+function renderRecentEvents(events){
+  $('#ov-events').innerHTML=(events||[]).slice(0,20).map(r=>{
+    const failed=r.status_code>=400||r.error;
+    const st=r.status_code>=400?'err':'ok';
+    const statusTxt=failed?(r.error?'ERR':r.status_code):r.status_code;
+    return `<tr class="row-click" data-id="${esc(r.request_id||'')}">
+      <td class="mono">${fmt.time(r.timestamp)}</td>
+      <td>${esc(r.resource_id||'—')}</td>
+      <td>${esc(r.provider||'—')}</td>
+      <td class="mono">${esc(r.model||'—')}</td>
+      <td class="num">${fmt.n(r.total_tokens)}</td>
+      <td class="num">${r.cost==null?'-':fmt.money(r.cost,r.currency)+Number(r.cost).toFixed(4)}</td>
+      <td class="num">${fmt.ms(r.latency_ms)}</td>
+      <td><span class="badge ${st}">${statusTxt}</span></td></tr>`;
+  }).join('')||'<tr><td colspan="8"><div class="empty">NO RECENT EVENTS<br><span style="color:var(--dim);font-size:11px">No AI requests recorded yet.</span></div></td></tr>';
 }
 
 /* ── Requests ── */
@@ -521,7 +559,7 @@ async function renderResources(){
   }
   const rs=d.resources||[];
   const states={};(st.resources||[]).forEach(s=>states[s.resource_id]=s);
-  const num=v=>v===null||v===undefined?'N/A':fmt.n(v);
+  const num=v=>v===null||v===undefined?'—':fmt.n(v);   // NULL observation 数值 → —（绝不 0）
   $('#res-cards').innerHTML=rs.map(r=>`<div class="card res-card" data-res="${esc(r.resource_id)}" style="cursor:pointer">
     <div class="lb">${esc(r.resource_id)}${r.enabled===false?' <span style="color:var(--yellow)">[DISABLED]</span>':''}</div>
     <div class="vl" style="font-size:14px">${esc(r.resource_name||r.resource_id)}</div>
@@ -537,6 +575,7 @@ async function renderResources(){
     <td>${usedBadge(r)}${r.enabled===false?' <span style="color:var(--yellow);font-size:10px">DISABLED</span>':''}</td>
     <td class="num">${num(s.balance)}</td><td class="num">${num(s.quota)}</td><td class="num">${num(s.remaining)}</td>
     <td>${obsBadge(s)}</td>
+    <td class="mono" style="font-size:11px">${s.observed_at?fmt.time(s.observed_at):'—'}</td>
     <td>
       <span class="res-act" data-act="edit" title="EDIT">[EDIT]</span>
       <span class="res-act" data-act="toggle" title="toggle">[${r.enabled===false?'ENABLE':'DISABLE'}]</span>
@@ -739,6 +778,8 @@ $('#f-reset').onclick=()=>{Object.assign(reqState,{page:1,provider:'',model:'',s
   $('#f-provider').value=$('#f-model').value=$('#f-source').value=$('#f-project').value=$('#f-status').value='';renderRequests()};
 /* 启动 */
 (async()=>{await loadFilters();route()})();
+/* 轮询刷新：每 45s 重新渲染当前页（不引入 WebSocket/SSE；标签页隐藏时跳过） */
+setInterval(()=>{ if(!document.hidden) render(location.hash.slice(1)||'overview'); }, 45000);
 </script>
 </body>
 </html>
