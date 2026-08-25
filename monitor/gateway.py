@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import copy
 import json
 import time
 from typing import Optional
@@ -153,7 +154,11 @@ async def proxy(provider: str, path: str, request: Request):
             f"provider '{provider}' 未配置 API Key（请在环境变量设置 "
             f"{_env_name(provider)}）",
             400)
-    cfg.api_keys = [key]  # 内存态注入，绝不落盘
+    # H3 修复：runtime secret 通过临时副本注入 upstream，绝不修改共享的
+    # config_mgr.providers[provider] 对象，避免后续任意 save() 把真实 secret 落盘。
+    # 注入的 key 仅供本次 upstream 调用使用（CredentialProvider 已校验非空）。
+    runtime_cfg = copy.copy(cfg)
+    runtime_cfg.api_keys = [key]
 
     # Resource 显式归因：X-Monitor-Resource 存在但未注册 → 拒绝（不自动创建）
     resource_header = request.headers.get("x-monitor-resource")
@@ -175,10 +180,10 @@ async def proxy(provider: str, path: str, request: Request):
             return _error_response(provider, "request body 不是合法 JSON", 400)
 
     event = _build_event(provider, path, request, body, adapter)
-    url = adapter.upstream_url(cfg, path)
+    url = adapter.upstream_url(runtime_cfg, path)
     if request.url.query:
         url = f"{url}?{request.url.query}"
-    headers = adapter.upstream_headers(cfg, dict(request.headers))
+    headers = adapter.upstream_headers(runtime_cfg, dict(request.headers))
     out_body = adapter.upstream_body(body)
     stream = adapter.is_stream(body, path)
     started = time.perf_counter()

@@ -119,8 +119,12 @@ def upsert_provider(name: str, body: ProviderIn):
         api_keys=body.api_keys,
         test_model=body.test_model,
     )
+    # has_key / key_count 由环境变量（CredentialProvider）实时判定，
+    # 不反映任何已落盘的 secret（Phase 1E-C 安全边界）。
+    cred = CredentialProvider()
+    has_key = cred.available(name)
     return {"name": p.name, "enabled": p.enabled, "base_url": p.base_url,
-            "has_key": p.has_key, "key_count": len(p.api_keys),
+            "has_key": has_key, "key_count": 1 if has_key else 0,
             "test_model": p.test_model}
 
 
