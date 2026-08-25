@@ -22,6 +22,10 @@ from .registry import ProviderRegistry
 from .resource import ResourceRegistry
 from .sanitize import sanitize_error, sanitize_json_text
 from .stream import SubscriberManager
+from .credential import CredentialProvider, _env_name
+
+# 凭据边界：SECRET 仅运行时从环境变量经 CredentialProvider 解析，绝不读 config.yaml 明文
+cred_provider = CredentialProvider()
 
 router = APIRouter()
 
@@ -71,7 +75,7 @@ def _finalize(event: AIRequestEvent, started: float, status_code: int,
             event.cache_write_tokens = cache["cache_write_tokens"]
         if event.cache_read_tokens is not None:
             event.cache_hit = 1 if event.cache_read_tokens > 0 else 0
-    # Gateway 不计算 estimated_cost（Step 4 迁入 Core）；
+    # Gateway 不计算 cost（Step 4 迁入 Core）；
     # 提交 raw event 给 Core，由 Core normalize + pricing + persist
     core.ingest(event.to_dict())
 
@@ -82,6 +86,17 @@ def _error_response(provider: str, message: str, status: int) -> JSONResponse:
         content={"error": {"message": sanitize_error(message),
                            "monitor": True, "provider": provider}},
     )
+
+
+def _record_rejected(provider: str, model, message: str) -> None:
+    """记录被拒绝的请求（event_type='rejected'）：token/cost 必须为 NULL，不污染 Usage 统计。"""
+    try:
+        evt = AIRequestEvent(provider=provider, model=model,
+                             event_type="rejected", error=sanitize_error(message))
+        if core is not None:
+            core.ingest(evt.to_dict())
+    except Exception:
+        pass  # 拒绝事件落库失败不应影响主拒绝响应
 
 
 def _event_snapshot(event: AIRequestEvent) -> dict:
@@ -101,7 +116,7 @@ def _event_snapshot(event: AIRequestEvent) -> dict:
         "cache_read_tokens": event.cache_read_tokens,
         "cache_hit": event.cache_hit,
         "latency_ms": event.latency_ms,
-        "estimated_cost": event.estimated_cost,
+        "cost": event.cost,
         "currency": event.currency,
         "error": event.error,
     }
@@ -119,13 +134,26 @@ async def _publish(event: AIRequestEvent, kind: str) -> None:
 async def proxy(provider: str, path: str, request: Request):
     adapter = registry.get(provider)
     if not adapter:
+        _record_rejected(provider, None, f"unknown provider: {provider}")
         return _error_response(provider, f"unknown provider: {provider}", 404)
 
     cfg = config_mgr.get(provider)
     if not cfg or not cfg.enabled:
+        _record_rejected(provider, None, f"provider '{provider}' 未启用，请先在 Dashboard 配置")
         return _error_response(provider, f"provider '{provider}' 未启用，请先在 Dashboard 配置", 400)
-    if not cfg.api_key:
-        return _error_response(provider, f"provider '{provider}' 未配置 API Key", 400)
+
+    # 凭据边界：SECRET 仅运行时从环境变量经 CredentialProvider 解析，绝不读 config.yaml 明文
+    key = cred_provider.get(provider)
+    if not key:
+        _record_rejected(provider, None,
+                         f"provider '{provider}' 未配置 API Key（请在环境变量设置 "
+                         f"{_env_name(provider)}）")
+        return _error_response(
+            provider,
+            f"provider '{provider}' 未配置 API Key（请在环境变量设置 "
+            f"{_env_name(provider)}）",
+            400)
+    cfg.api_keys = [key]  # 内存态注入，绝不落盘
 
     # Resource 显式归因：X-Monitor-Resource 存在但未注册 → 拒绝（不自动创建）
     resource_header = request.headers.get("x-monitor-resource")

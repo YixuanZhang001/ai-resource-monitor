@@ -104,6 +104,9 @@ def client(tmp_path, monkeypatch):
     m.config_mgr.upsert("gemini", enabled=True,
                         base_url=f"http://127.0.0.1:{upstream.server_port}/gemini",
                         api_key="sk-gemini-test")
+    # 凭据边界：gateway 仅从环境变量经 CredentialProvider 解析 secret（不读 config.yaml）
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    monkeypatch.setenv("GEMINI_API_KEY", "sk-gemini-test")
 
     with TestClient(m.app) as c:
         yield c, m.store
@@ -125,7 +128,7 @@ def test_openai_compat_chain(client):
     assert e["model"] == "deepseek-chat"
     assert (e["input_tokens"], e["output_tokens"], e["total_tokens"]) == (10, 5, 15)
     assert e["status_code"] == 200 and e["error"] is None
-    assert e["estimated_cost"] is not None and e["currency"] == "CNY"
+    assert e["cost"] is not None and e["currency"] == "CNY"
     assert e["source"] == "pytest" and e["trace_id"] == "trace-1"
     assert e["latency_ms"] is not None
 
@@ -144,8 +147,8 @@ def test_response_model_overrides_request_alias(client):
     })
     e = store.recent_events(1)[0]
     assert e["model"] == "deepseek-v4-flash"   # 用响应真实 model，非请求 alias
-    # v4-flash 已校准（2026-08-17 官方价）→ estimated_cost 非 None
-    assert e["estimated_cost"] is not None and e["currency"] == "CNY"
+    # v4-flash 已校准（2026-08-17 官方价）→ cost 非 None
+    assert e["cost"] is not None and e["currency"] == "CNY"
 
 
 def test_cache_hit_three_states(client):
@@ -297,7 +300,7 @@ def test_no_header_resource_null(client):
            json={"model": "deepseek-chat", "messages": []})
     e = store.recent_events(1)[0]
     assert e["resource_id"] is None
-    assert e["estimated_cost"] is not None  # pricing 不受影响
+    assert e["cost"] is not None  # pricing 不受影响
 
 
 def test_unknown_resource_rejected(client, monkeypatch):

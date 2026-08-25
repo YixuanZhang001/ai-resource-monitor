@@ -119,9 +119,9 @@ def verify_provider(name, model):
               ev["input_tokens"] is not None and ev["output_tokens"] is not None
               and ev["total_tokens"] is not None,
               f"in={ev['input_tokens']} out={ev['output_tokens']} total={ev['total_tokens']}")
-        check(name, "A6 cost计算", ev["estimated_cost"] is not None,
-              f"cost={ev['estimated_cost']} {ev['currency']} "
-              f"{'(pricing未命中→0)' if ev['estimated_cost'] == 0 and ev['total_tokens'] else ''}")
+        check(name, "A6 cost计算", ev["cost"] is not None,
+              f"cost={ev['cost']} {ev['currency']} "
+              f"{'(pricing未命中→0)' if ev['cost'] == 0 and ev['total_tokens'] else ''}")
         check(name, "A7 latency记录", ev["latency_ms"] is not None,
               f"latency={ev['latency_ms']}ms")
     else:

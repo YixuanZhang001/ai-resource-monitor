@@ -68,7 +68,7 @@ def verify_one(name: str, cfg) -> bool:
     ok = e["status_code"] == 200 and e["total_tokens"] is not None
     print(f"  [{'PASS' if ok else 'WARN'}] event: model={e['model']} "
           f"in={e['input_tokens']} out={e['output_tokens']} "
-          f"latency={e['latency_ms']}ms cost={e['estimated_cost']} {e['currency']}")
+          f"latency={e['latency_ms']}ms cost={e['cost']} {e['currency']}")
     return ok
 
 

@@ -5,17 +5,37 @@ import json
 import time
 import uuid
 from dataclasses import dataclass, field, asdict
+from datetime import datetime, timezone
 from typing import Any, Optional
+
+from .sanitize import sanitize_usage_dict
+
+
+def utc_now_ms() -> str:
+    """UTC ISO8601 毫秒时间戳，例如 2026-08-24T08:40:09.123Z。
+
+    内部时间统一为 UTC，避免本地时区歧义；毫秒精度由调用时刻决定，
+    绝不伪造（无上游毫秒信息时仍只记录到真实采集精度）。
+    """
+    dt = datetime.now(timezone.utc)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
 
 
 @dataclass
 class Usage:
-    """Token 用量。Provider 无法提供时保持 None，不伪造数据。"""
+    """Token 用量。Provider 无法提供时保持 None，不伪造数据。
+
+    extension：Provider 返回的、无法映射到标准列的合法 usage 字段。
+    必须进入 sanitized extension，绝不静默丢弃（Unknown Usage ≠ Secret）。
+    """
+
     input_tokens: Optional[int] = None
     output_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
     cache_read_tokens: Optional[int] = None
     cache_write_tokens: Optional[int] = None
+    reasoning_tokens: Optional[int] = None
+    extension: Optional[dict] = None  # 未知合法 usage 字段（落库前经 sanitizer 清洗）
 
 
 @dataclass
@@ -30,6 +50,7 @@ class AIRequestEvent:
     input_tokens: Optional[int] = None
     output_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
+    reasoning_tokens: Optional[int] = None  # 推理思考 token（o1 / DeepSeek-R 等）
 
     # Cache（仅当 Provider 真实返回时填充；否则保持 None，不推测）
     cache_read_tokens: Optional[int] = None
@@ -39,8 +60,12 @@ class AIRequestEvent:
     latency_ms: Optional[float] = None
     status_code: Optional[int] = None
 
-    estimated_cost: Optional[float] = None
+    # Cost / Billing 三轴（严格分离）
+    cost: Optional[float] = None          # NULL=unknown / 0=confirmed zero / >0=charged
     currency: Optional[str] = None
+    billing_status: Optional[str] = None  # paid|free|included|trial|promotional|quota|unknown
+    list_cost: Optional[float] = None     # 零售参考价（可选）
+    pricing_snapshot_id: Optional[str] = None  # 冻结历史价快照引用
 
     error: Optional[str] = None
 
@@ -50,11 +75,18 @@ class AIRequestEvent:
 
     # Revision 2 统一字段（Step 2 schema migration 后落库；客户端不给则默认/None，不伪造）
     collector: str = "gateway"
-    event_type: str = "llm_call"
+    event_type: str = "llm_call"          # llm_call | rejected | error
     execution_id: Optional[str] = None    # 客户端上报才填，否则 None
     task_id: Optional[str] = None         # 客户端上报才填，否则 None
     resource_id: Optional[str] = None     # 消耗的 Resource（X-Monitor-Resource 显式归因）
-    metadata: Optional[dict] = None       # 扩展信息（JSON 序列化落库）
+
+    # 时间语义：timestamp=epoch 秒（兼容旧查询）；occurred_at=UTC ISO8601 毫秒（规范）
+    occurred_at: str = field(default_factory=utc_now_ms)
+    schema_version: int = field(default=2)
+
+    # 未知合法 usage 字段，经 sanitizer 清洗后的 JSON（绝不丢失、绝不存 credential）
+    usage_extension: Optional[dict] = None
+    metadata: Optional[dict] = None       # 其他扩展信息（JSON 序列化落库）
 
     request_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     timestamp: float = field(default_factory=time.time)
@@ -71,14 +103,22 @@ class AIRequestEvent:
             self.total_tokens = (self.input_tokens or 0) + (self.output_tokens or 0)
         self.cache_read_tokens = usage.cache_read_tokens
         self.cache_write_tokens = usage.cache_write_tokens
+        self.reasoning_tokens = usage.reasoning_tokens
         if usage.cache_read_tokens is None:
             self.cache_hit = None
         else:
             self.cache_hit = 1 if usage.cache_read_tokens > 0 else 0
+        # 未知 usage 字段：经 sanitizer 清洗后保留，绝不静默丢弃、绝不存 credential
+        if usage.extension:
+            cleaned = sanitize_usage_dict(usage.extension)
+            if cleaned:
+                self.usage_extension = cleaned
 
     def to_dict(self) -> dict:
         d = asdict(self)
-        # metadata 落库前序列化为 JSON 文本（读回时由 storage._query 反序列化）
+        # JSON 列落库前序列化
+        if isinstance(d.get("usage_extension"), dict):
+            d["usage_extension"] = json.dumps(d["usage_extension"], ensure_ascii=False)
         if isinstance(d.get("metadata"), dict):
             d["metadata"] = json.dumps(d["metadata"], ensure_ascii=False)
         return d

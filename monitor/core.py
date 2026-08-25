@@ -4,7 +4,7 @@
   Collector raw observation
       ↓  ingest(raw)
    normalize → AIRequestEvent（填 collector/event_type；execution_id/task_id 不伪造）
-   pricing   → estimated_cost（Step 4 从 Gateway 迁入；Core 不知具体 Provider）
+   pricing   → cost（Step 4 从 Gateway 迁入；Core 不知具体 Provider）
    persist   → Storage
       ↓
    return event identifier (request_id)
@@ -28,7 +28,7 @@ _DIRECT_FIELDS = (
     "input_tokens", "output_tokens", "total_tokens",
     "cache_read_tokens", "cache_write_tokens", "cache_hit",
     "latency_ms", "status_code",
-    "estimated_cost", "currency", "error",
+    "cost", "currency", "billing_status", "list_cost", "pricing_snapshot_id", "error",
     "trace_id", "parent_id",
     "collector", "event_type", "execution_id", "task_id", "resource_id",
     "metadata",
@@ -82,7 +82,7 @@ class MonitorCore:
             )
             cost = self.pricing.compute_cost(event.provider, event.model, usage)
             if cost:
-                event.estimated_cost = cost.amount
+                event.cost = cost.amount
                 event.currency = cost.currency
         self.store.insert(event)
         return event.request_id

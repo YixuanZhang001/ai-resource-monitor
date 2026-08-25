@@ -27,7 +27,7 @@ def _insert(store, *, provider="deepseek", model="deepseek-v4-flash",
         input_tokens=input_tokens, output_tokens=output_tokens,
         total_tokens=input_tokens + output_tokens,
         latency_ms=latency, status_code=status_code,
-        estimated_cost=cost, error=error,
+        cost=cost, error=error,
         timestamp=timestamp or time.time()))
 
 
@@ -71,7 +71,7 @@ def test_paid_resource_known_cost(app_env):
     paid = [r for r in data["resources"] if r["resource_id"] == "deepseek-paid"][0]
     assert paid["requests"] == 1
     assert paid["total_tokens"] == 150
-    assert paid["estimated_cost"] == 0.001
+    assert paid["cost"] == 0.001
     assert paid["cost_status"] == "known"
 
 
@@ -84,7 +84,7 @@ def test_free_resource_unknown_cost(app_env):
     free = [r for r in data["resources"] if r["resource_id"] == "deepseek-free"][0]
     assert free["requests"] == 1
     assert free["total_tokens"] == 300
-    assert free["estimated_cost"] is None        # 不是 0
+    assert free["cost"] is None        # 不是 0
     assert free["cost_status"] == "unknown"
 
 
@@ -96,7 +96,7 @@ def test_mixed_cost_status(app_env):
     data = _usage(c)
     paid = [r for r in data["resources"] if r["resource_id"] == "deepseek-paid"][0]
     assert paid["requests"] == 2
-    assert paid["estimated_cost"] == 0.01        # 仅已知部分，明确 mixed
+    assert paid["cost"] == 0.01        # 仅已知部分，明确 mixed
     assert paid["cost_status"] == "mixed"
 
 
@@ -121,7 +121,7 @@ def test_unattributed_events_separate(app_env):
     u = data["unattributed"]
     assert u["requests"] == 1
     assert u["total_tokens"] == 60        # input 10 + output 50（_insert 默认）
-    assert u["estimated_cost"] == 0.0001
+    assert u["cost"] == 0.0001
     # 未归因事件不进入任何具体 resource
     paid = [r for r in data["resources"] if r["resource_id"] == "deepseek-paid"][0]
     assert paid["requests"] == 1

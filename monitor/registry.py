@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from typing import Optional
 
-from .providers import GeminiAdapter, OpenAICompatibleAdapter, ProviderAdapter
+from .providers import (GeminiAdapter, GenericAdapter, OpenAICompatibleAdapter,
+                       ProviderAdapter)
 
 PROVIDER_DEFS: dict[str, dict] = {
     "openai": {
@@ -63,6 +64,11 @@ class ProviderRegistry:
         self._defaults: dict[str, str] = {}
         for name, spec in PROVIDER_DEFS.items():
             self.register(name, spec)
+        self._generic = GenericAdapter()  # 兜底解析器（任意 OpenAI-compat / Gemini 形态）
+
+    def generic(self) -> ProviderAdapter:
+        """未知 Provider 的兜底解析器；不进入注册表（无固定 base_url）。"""
+        return self._generic
 
     def register(self, name: str, spec: dict) -> None:
         kind = spec["kind"]
@@ -74,6 +80,8 @@ class ProviderRegistry:
             )
         elif kind == "gemini":
             adapter = GeminiAdapter()
+        elif kind == "generic":
+            adapter = GenericAdapter()
         else:
             raise ValueError(f"unknown adapter kind: {kind}")
         self._adapters[name] = adapter

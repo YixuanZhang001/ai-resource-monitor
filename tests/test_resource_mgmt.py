@@ -34,7 +34,7 @@ def _insert(store, *, provider="deepseek", model="deepseek-v4-flash",
     store.insert(AIRequestEvent(
         provider=provider, model=model, resource_id=resource_id,
         input_tokens=tokens, output_tokens=5, total_tokens=tokens + 5,
-        latency_ms=100.0, status_code=200, estimated_cost=cost,
+        latency_ms=100.0, status_code=200, cost=cost,
         timestamp=time.time()))
 
 
@@ -286,6 +286,8 @@ def gw(app, tmp_path, monkeypatch):
     m.config_mgr.upsert("deepseek", enabled=True,
                         base_url=f"http://127.0.0.1:{upstream.server_port}",
                         api_key="sk-test")
+    # 凭据边界：gateway 仅从环境变量经 CredentialProvider 解析 secret（不读 config.yaml）
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
     yield m
     upstream.shutdown()
 
@@ -342,7 +344,7 @@ def test_no_header_request_still_works(gw):
         assert r.status_code == 200
         e = m.store.recent_events(1)[0]
         assert e["resource_id"] is None
-        assert e["estimated_cost"] is not None
+        assert e["cost"] is not None
 
 
 # ---------- Dashboard 数据（无需重启） ----------

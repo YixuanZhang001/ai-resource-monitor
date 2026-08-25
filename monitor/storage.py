@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS events (
     cache_hit INTEGER,
     latency_ms REAL,
     status_code INTEGER,
-    estimated_cost REAL,
+    cost REAL,
     currency TEXT,
     error TEXT,
     trace_id TEXT,
@@ -69,10 +69,11 @@ CREATE INDEX IF NOT EXISTS idx_states_res_ts
 COLUMNS = [
     "request_id", "timestamp", "provider", "model", "endpoint", "source",
     "project", "input_tokens", "output_tokens", "total_tokens",
-    "cache_read_tokens", "cache_write_tokens", "cache_hit", "latency_ms",
-    "status_code", "estimated_cost", "currency", "error", "trace_id",
+    "reasoning_tokens", "cache_read_tokens", "cache_write_tokens", "cache_hit",
+    "latency_ms", "status_code", "cost", "currency", "billing_status",
+    "list_cost", "pricing_snapshot_id", "error", "trace_id",
     "parent_id", "collector", "event_type", "execution_id", "task_id",
-    "resource_id", "metadata",
+    "resource_id", "occurred_at", "schema_version", "usage_extension", "metadata",
 ]
 
 # 增量列迁移（幂等）：旧库补齐新列，不修改既有字段与数据
@@ -86,10 +87,17 @@ COLUMN_MIGRATIONS = [
     ("task_id", "TEXT"),
     ("resource_id", "TEXT"),
     ("metadata", "TEXT"),
+    ("reasoning_tokens", "INTEGER"),
+    ("occurred_at", "TEXT"),
+    ("schema_version", "INTEGER DEFAULT 2"),
+    ("billing_status", "TEXT"),
+    ("list_cost", "REAL"),
+    ("pricing_snapshot_id", "TEXT"),
+    ("usage_extension", "TEXT"),
 ]
 
 # 列重命名（幂等）：旧名存在且新名不存在才 RENAME
-COLUMN_RENAMES = [("parent_span_id", "parent_id")]
+COLUMN_RENAMES = [("parent_span_id", "parent_id"), ("estimated_cost", "cost")]
 
 
 def ensure_columns(conn: sqlite3.Connection) -> list[str]:
@@ -211,9 +219,9 @@ class EventStore:
                 FROM events{where}""",
             params,
         )[0]
-        cost_where = f"{where} AND estimated_cost IS NOT NULL" if where else " WHERE estimated_cost IS NOT NULL"
+        cost_where = f"{where} AND cost IS NOT NULL" if where else " WHERE cost IS NOT NULL"
         costs = self._query(
-            f"""SELECT currency, ROUND(SUM(estimated_cost), 6) AS cost
+            f"""SELECT currency, ROUND(SUM(cost), 6) AS cost
                 FROM events{cost_where}
                 GROUP BY currency""",
             params,
@@ -238,8 +246,8 @@ class EventStore:
     def cost_by_provider(self, since: Optional[float] = None) -> list[dict]:
         where, params = self._since(since)
         return self._query(
-            f"""SELECT provider, currency, ROUND(SUM(estimated_cost), 6) AS cost
-                FROM events{where + ' AND' if where else ' WHERE'} estimated_cost IS NOT NULL
+            f"""SELECT provider, currency, ROUND(SUM(cost), 6) AS cost
+                FROM events{where + ' AND' if where else ' WHERE'} cost IS NOT NULL
                 GROUP BY provider, currency ORDER BY cost DESC""",
             params,
         )
@@ -251,7 +259,7 @@ class EventStore:
                        COUNT(*) AS requests,
                        COALESCE(SUM(total_tokens), 0) AS tokens,
                        currency,
-                       ROUND(SUM(estimated_cost), 6) AS cost
+                       ROUND(SUM(cost), 6) AS cost
                 FROM events{where}
                 GROUP BY provider, model, currency
                 ORDER BY requests DESC""",
@@ -264,16 +272,17 @@ class EventStore:
             """SELECT date(timestamp, 'unixepoch', 'localtime') AS day,
                       COUNT(*) AS requests,
                       COALESCE(SUM(total_tokens), 0) AS tokens
-               FROM events WHERE timestamp >= ?
+               FROM events WHERE timestamp >= ? AND event_type = 'llm_call'
                GROUP BY day ORDER BY day""",
             (since,),
         )
 
     @staticmethod
     def _since(since: Optional[float]) -> tuple[str, tuple]:
+        # 仅统计成功调用（event_type='llm_call'）；rejected/error 事件不进入 Usage 统计
         if since is None:
-            return "", ()
-        return " WHERE timestamp >= ?", (since,)
+            return " WHERE event_type = 'llm_call'", ()
+        return " WHERE timestamp >= ? AND event_type = 'llm_call'", (since,)
 
     # ---------- 第二阶段：Analytics（全部 SQL 层聚合） ----------
 
@@ -310,10 +319,10 @@ class EventStore:
                 FROM events{where}""",
             params,
         )[0]
-        cost_where = f"{where} AND estimated_cost IS NOT NULL" if where \
-            else " WHERE estimated_cost IS NOT NULL"
+        cost_where = f"{where} AND cost IS NOT NULL" if where \
+            else " WHERE cost IS NOT NULL"
         costs = self._query(
-            f"""SELECT currency, ROUND(SUM(estimated_cost), 6) AS cost
+            f"""SELECT currency, ROUND(SUM(cost), 6) AS cost
                 FROM events{cost_where} GROUP BY currency""",
             params,
         )
@@ -328,10 +337,10 @@ class EventStore:
         where, params = self._since(since)
         return self._query(
             f"""SELECT {expr} AS name, currency,
-                       ROUND(SUM(estimated_cost), 6) AS cost,
+                       ROUND(SUM(cost), 6) AS cost,
                        COUNT(*) AS requests
                 FROM events{where + ' AND' if where else ' WHERE'}
-                     estimated_cost IS NOT NULL
+                     cost IS NOT NULL
                 GROUP BY {expr}, currency
                 ORDER BY cost DESC""",
             params,
@@ -360,7 +369,7 @@ class EventStore:
                       COALESCE(SUM(input_tokens), 0) AS input_tokens,
                       COALESCE(SUM(output_tokens), 0) AS output_tokens,
                       COALESCE(SUM(total_tokens), 0) AS total_tokens
-               FROM events WHERE timestamp >= ?
+               FROM events WHERE timestamp >= ? AND event_type = 'llm_call'
                GROUP BY day ORDER BY day""",
             (since,),
         )
@@ -443,7 +452,7 @@ class EventStore:
                        COALESCE(source, 'Unknown') AS source,
                        COALESCE(project, 'Unknown') AS project,
                        input_tokens, output_tokens, total_tokens,
-                       latency_ms, status_code, estimated_cost, currency, error
+                       latency_ms, status_code, cost, currency, error
                 FROM events{where}
                 ORDER BY id DESC
                 LIMIT ? OFFSET ?""",
@@ -457,7 +466,7 @@ class EventStore:
                       COALESCE(source, 'Unknown') AS source,
                       COALESCE(project, 'Unknown') AS project,
                       input_tokens, output_tokens, total_tokens,
-                      latency_ms, status_code, estimated_cost, currency,
+                      latency_ms, status_code, cost, currency,
                       error, trace_id, parent_id
                FROM events WHERE request_id = ? LIMIT 1""",
             (request_id,))
@@ -485,9 +494,9 @@ class EventStore:
                                 THEN 1 ELSE 0 END) AS errors,
                        COALESCE(AVG(latency_ms), 0) AS avg_latency_ms,
                        MAX(timestamp) AS last_used_at,
-                       SUM(CASE WHEN estimated_cost IS NOT NULL
+                       SUM(CASE WHEN cost IS NOT NULL
                                 THEN 1 ELSE 0 END) AS cost_count,
-                       COALESCE(SUM(estimated_cost), 0) AS cost_known_sum
+                       COALESCE(SUM(cost), 0) AS cost_known_sum
                 FROM events{where}
                 GROUP BY resource_id""",
             params,
@@ -507,9 +516,9 @@ class EventStore:
                        SUM(CASE WHEN error IS NOT NULL OR status_code >= 400
                                 THEN 1 ELSE 0 END) AS errors,
                        COALESCE(AVG(latency_ms), 0) AS avg_latency_ms,
-                       SUM(CASE WHEN estimated_cost IS NOT NULL
+                       SUM(CASE WHEN cost IS NOT NULL
                                 THEN 1 ELSE 0 END) AS cost_count,
-                       COALESCE(SUM(estimated_cost), 0) AS cost_known_sum
+                       COALESCE(SUM(cost), 0) AS cost_known_sum
                 FROM events{where}{cond}
                 GROUP BY model ORDER BY requests DESC""",
             params + (resource_id,),
@@ -521,7 +530,7 @@ class EventStore:
             """SELECT request_id, timestamp, provider, model,
                       COALESCE(source, 'Unknown') AS source,
                       input_tokens, output_tokens, total_tokens,
-                      latency_ms, status_code, estimated_cost, currency, error
+                      latency_ms, status_code, cost, currency, error
                FROM events WHERE resource_id = ?
                ORDER BY id DESC LIMIT ?""",
             (resource_id, limit))

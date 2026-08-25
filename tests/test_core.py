@@ -116,17 +116,17 @@ def test_metadata_str_passthrough_compat(core):
     assert e.metadata == {"k": 1}
 
 
-def test_ingest_computes_estimated_cost(core):
-    """Step 4：pricing 由 Core 承担，ingest 后 estimated_cost 落库。"""
+def test_ingest_computes_cost(core):
+    """Step 4：pricing 由 Core 承担，ingest 后 cost 落库。"""
     rid = core.ingest(_raw(input_tokens=100, output_tokens=50, total_tokens=150))
     row = core.store.recent_events(1)[0]
-    assert row["estimated_cost"] is not None
+    assert row["cost"] is not None
     assert row["currency"] == "CNY"   # deepseek 刊例
 
 
 def test_ingest_no_cost_when_pricing_absent(tmp_path):
-    """无 pricing 时 estimated_cost 保持 None（不伪造）。"""
+    """无 pricing 时 cost 保持 None（不伪造）。"""
     c = MonitorCore(EventStore(tmp_path / "x.db"))
     c.ingest(_raw(input_tokens=10, output_tokens=5))
     row = c.store.recent_events(1)[0]
-    assert row["estimated_cost"] is None
+    assert row["cost"] is None

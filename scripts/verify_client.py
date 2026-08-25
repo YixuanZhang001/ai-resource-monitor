@@ -53,7 +53,7 @@ def main() -> int:
     for e in evs:
         print(f"  event: model={e['model']} source={e['source']!r} "
               f"in={e['input_tokens']} out={e['output_tokens']} total={e['total_tokens']} "
-              f"cost={e['estimated_cost']}{e['currency']} latency={e['latency_ms']}ms "
+              f"cost={e['cost']}{e['currency']} latency={e['latency_ms']}ms "
               f"status={e['status_code']}")
     return 0
 

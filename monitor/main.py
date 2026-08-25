@@ -433,7 +433,7 @@ def _resource_summary(agg: dict, resource_def=None) -> dict:
         "error_count": agg.get("errors", 0),
         "avg_latency_ms": round(agg.get("avg_latency_ms", 0), 1) or None,
         "last_used_at": agg.get("last_used_at"),
-        "estimated_cost": (agg.get("cost_known_sum", 0)
+        "cost": (agg.get("cost_known_sum", 0)
                            if status in ("known", "mixed") else None),
         "cost_currency": None,
         "cost_status": status,
@@ -468,7 +468,7 @@ def api_resources_usage(range: str = Query("all")):
     unatt = aggs.get("", None)
     unattributed = (_resource_summary(unatt) if unatt else
                     {"resource_id": None, "requests": 0, "input_tokens": 0,
-                     "output_tokens": 0, "total_tokens": 0, "estimated_cost": None,
+                     "output_tokens": 0, "total_tokens": 0, "cost": None,
                      "cost_status": "none"})
     return {"resources": out, "unregistered": unregistered,
             "unattributed": unattributed, "range": range}

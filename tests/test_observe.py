@@ -239,7 +239,7 @@ def test_analytics_unaffected_by_observations(app):
     m.store.insert(AIRequestEvent(
         provider="deepseek", model="deepseek-v4-flash", resource_id="obs-paid",
         input_tokens=5, output_tokens=1, total_tokens=6, latency_ms=100,
-        status_code=200, estimated_cost=1.2e-05, timestamp=time.time()))
+        status_code=200, cost=1.2e-05, timestamp=time.time()))
     c.post("/api/resources/obs-paid/observe",
            json={"status": "known", "balance": 100})
     u = c.get("/api/resources/usage").json()

@@ -64,6 +64,8 @@ def client(tmp_path, monkeypatch):
     m.config_mgr.upsert("deepseek", enabled=True,
                         base_url=f"http://127.0.0.1:{upstream.server_port}",
                         api_key="sk-test", test_model="deepseek-chat")
+    # 凭据边界：gateway 仅从环境变量经 CredentialProvider 解析 secret（不读 config.yaml）
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
     m.config_mgr.set_dim_values(sources=["VS Code", "PAL"],
                                 projects=["PAL", "Research"])
 
@@ -82,7 +84,7 @@ def insert_event(store, *, provider="deepseek", model="deepseek-chat",
         input_tokens=input_tokens, output_tokens=output_tokens,
         total_tokens=total_tokens or (input_tokens + output_tokens),
         latency_ms=latency_ms, status_code=status_code,
-        estimated_cost=cost, currency=currency, error=error,
+        cost=cost, currency=currency, error=error,
     )
     if timestamp is not None:
         e.timestamp = timestamp
@@ -285,7 +287,7 @@ def test_request_detail_and_404(client):
     assert d["source"] == "VS Code"
     assert d["total_tokens"] == 150
     assert d["latency_ms"] == 123.4
-    assert d["estimated_cost"] == 0.001
+    assert d["cost"] == 0.001
     assert c.get("/api/requests/nonexistent-id").status_code == 404
 
 

@@ -71,6 +71,8 @@ def base_url(tmp_path, monkeypatch):
     m.config_mgr.upsert("deepseek", enabled=True,
                         base_url=f"http://127.0.0.1:{upstream.server_port}",
                         api_key="sk-test")
+    # 凭据边界：gateway 仅从环境变量经 CredentialProvider 解析 secret（不读 config.yaml）
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
 
     config = uvicorn.Config(m.app, host="127.0.0.1", port=0, log_level="warning")
     server = uvicorn.Server(config)

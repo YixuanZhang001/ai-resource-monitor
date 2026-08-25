@@ -74,10 +74,22 @@ class OpenAICompatibleAdapter(ProviderAdapter):
         u = (response or {}).get("usage")
         if not u:
             return None
+        details = u.get("completion_tokens_details") or {}
+        reasoning = u.get("reasoning_tokens")
+        if not isinstance(reasoning, int):
+            reasoning = details.get("reasoning_tokens")
+        reasoning = int(reasoning) if isinstance(reasoning, int) else None
+        # 标准字段映射到类型列；其余未知字段进 extension（绝不静默丢弃，落库前经 sanitizer 清洗）
+        known = {"prompt_tokens", "completion_tokens", "total_tokens", "reasoning_tokens",
+                 "prompt_cache_hit_tokens", "prompt_cache_write_tokens"}
+        ext = {k: v for k, v in u.items() if k not in known}
         return Usage(
             input_tokens=u.get("prompt_tokens"),
             output_tokens=u.get("completion_tokens"),
             total_tokens=u.get("total_tokens"),
+            reasoning_tokens=reasoning,
+            cache_write_tokens=u.get("prompt_cache_write_tokens"),
+            extension=ext or None,
         )
 
     def extract_cache_usage(self, response: Optional[dict]) -> Optional[dict]:
@@ -103,11 +115,7 @@ class OpenAICompatibleAdapter(ProviderAdapter):
                 usage = chunk["usage"]   # 最后一个非空 usage 为准
         if not usage:
             return None
-        return Usage(
-            input_tokens=usage.get("prompt_tokens"),
-            output_tokens=usage.get("completion_tokens"),
-            total_tokens=usage.get("total_tokens"),
-        )
+        return self.extract_usage({"usage": usage})
 
     def extract_error(self, status_code: int, response: Optional[dict]) -> Optional[str]:
         if status_code < 400 and not (response or {}).get("error"):
