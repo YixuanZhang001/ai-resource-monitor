@@ -1,35 +1,113 @@
-# 复制为 data/config.yaml 并填入 API Key（或直接通过 Dashboard 配置）
+# 复制为 data/config.yaml 后按需修改：
+#   1) 把要用的 Provider 设为 enabled: true
+#   2) API Key 不要写进这个文件（写了会被静默丢弃、无任何报错），
+#      请改用环境变量或 Dashboard 凭据面板 —— 见下方「Provider 凭据」
+#   3) 想让「不带请求头的流量」也有 Resource 归因，设置
+#      providers.<name>.default_resource_id（必须是下方 resources 中已定义且
+#      enabled 的 id）。不设则这类流量记为 unattributed，绝不猜测。
 server:
   host: 127.0.0.1
   port: 8787
 
+# ── Provider：你能接入的 AI 服务（仅声明启用 + base_url） ──
+# 本文件刻意不接收 api_key：ConfigManager 加载时会剥离、保存时会剔除任何
+# api_key / api_keys 值（安全边界）。在此填写密钥不会生效，且没有任何报错提示。
 providers:
   openai:
     enabled: false
     base_url: https://api.openai.com
-    api_key: ""
     test_model: gpt-4o-mini
+    # 可选：把本 Provider 网关流量默认归入某个 Resource（仅当请求未带
+    # X-Monitor-Resource 头时生效）。必须是下方 resources 中已定义且 enabled 的
+    # resource_id；留空则不默认归属。这是你显式声明的确定性映射，绝不按
+    # Provider 名猜测。
+    # default_resource_id: openai-main
 
   deepseek:
     enabled: false
     base_url: https://api.deepseek.com
-    api_key: ""
     test_model: deepseek-chat
+    # 本 Provider 无 X-Monitor-Resource 头的流量默认归入此 Resource。
+    # 必须是下方 resources 中已定义且 enabled 的 id；不设则记为 unattributed。
+    # default_resource_id: deepseek-paid
+    # P6-D：Provider 级默认归属 Project（仅当请求未带 X-Monitor-Project 头时生效）。
+    # 这是你显式声明的确定性映射，绝不按 Provider / 模型猜测。留空则不默认归属。
+    # default_project: PAL
 
   kimi:
     enabled: false
     base_url: https://api.moonshot.cn
-    api_key: ""
     test_model: kimi-k2-0905-preview
 
   minimax:
     enabled: false
     base_url: https://api.minimaxi.com
-    api_key: ""
     test_model: MiniMax-M2
 
   gemini:
     enabled: false
     base_url: https://generativelanguage.googleapis.com
-    api_key: ""
     test_model: gemini-2.5-flash
+
+  # ── 自定义 OpenAI 兼容 Provider（P6-F） ──
+  # 任何暴露 /v1/chat/completions 的 OpenAI 兼容服务（自建 vLLM / Ollama /
+  # llama.cpp / 内网网关 / 第三方兼容层）都可直接接入，无需新增代码：
+  #   1) 在 providers 下声明（enabled: true + base_url）
+  #   2) 凭据走环境变量（见下）或 Dashboard 凭据面板，绝不落 config.yaml
+  #   3) 把 AI 应用的 base_url 指向 /gateway/<provider_name>/v1/... 即可
+  # Gateway 会自动复用 OpenAICompatibleAdapter 路由（不另起第二套代理）。
+  private-llm:
+    enabled: false
+    base_url: http://localhost:8000
+    test_model: local-model
+    # 凭据环境变量名约定：<UPPER_PROVIDER>_API_KEY，例如 PRIVATE_LLM_API_KEY
+    # default_project: local-experiments
+
+# ── 自定义 Provider 凭据（不写进 config.yaml，避免泄露） ──
+# 通过环境变量或 Dashboard 凭据面板（data/credentials.json，仅本机、0600）提供：
+#   export PRIVATE_LLM_API_KEY=sk-xxxx
+#   export DEEPSEEK_API_KEY=sk-xxxx
+# Monitor 解析顺序：环境变量优先，本地凭据兜底。
+
+# ── Resource：你实际拥有的 AI 资源（付费额度 / 免费额度 / 订阅 / 本地模型） ──
+# 一个 Provider 可以定义多个 Resource（例如 DeepSeek 的「付费」与「免费」额度）。
+# 定义后，把 AI 应用的 base_url 指向网关时，带上请求头即可精确归因：
+#     X-Monitor-Resource: deepseek-paid
+# 未带该头时，Monitor 仅做确定性、可解释的归因（见 gateway 归因层级），绝不猜测。
+#
+# ── Project 归因（P6-D）──
+# 请求级（优先级高）：
+#     X-Monitor-Project: Research
+# Provider 级（后台兜底，见 providers.<name>.default_project）：
+#     该 Provider 所有「未带 X-Monitor-Project 头」的请求默认归入此 Project。
+# 两者都未指定 → project = NULL（显示为 Unknown），绝不猜测。
+#
+# ── Client（Agent）归因（P6-E）──
+# 标识「这次调用来自哪个 Agent / 客户端」（Codex / WorkBuddy / 你的脚本 / curl 等）。
+# 解析顺序：X-Monitor-Client 头 > User-Agent > 无法识别则记为该 User-Agent 字面量。
+# 未提供任何线索 → client = NULL（显示为 Unknown）。
+# 例：Codex 调用时带上  X-Monitor-Client: codex
+#     OpenAI SDK 默认 User-Agent 会被识别为 openai-sdk
+#     curl 直接调用 → client = curl（字面量，不猜测为某 Agent）
+resources:
+  deepseek-paid:
+    name: DeepSeek 付费额度
+    provider: deepseek
+    resource_type: api
+    billing_mode: prepaid
+    account_scope: ""
+    enabled: true
+
+  deepseek-free:
+    name: DeepSeek 免费额度
+    provider: deepseek
+    resource_type: api
+    billing_mode: free
+    enabled: true
+
+  openai-main:
+    name: OpenAI 主账号
+    provider: openai
+    resource_type: api
+    billing_mode: pay_as_you_go
+    enabled: true

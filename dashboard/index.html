@@ -6,142 +6,137 @@
 <title>AI Resource Monitor</title>
 <style>
 :root{
-  --bg:#0a0a0c; --panel:#101013; --panel2:#15151a; --line:#26262c;
-  --text:#d6d6da; --dim:#5f5f68; --bright:#f2f2f4;
-  --green:#22c55e; --yellow:#eab308; --red:#ef4444; --cyan:#22d3ee;
-  --mono:ui-monospace,Consolas,"Cascadia Code","JetBrains Mono","Courier New",monospace;
+  --bg:#f5f6f8; --panel:#ffffff; --panel2:#f0f2f5; --line:#e6e9ee;
+  --text:#1d2330; --dim:#6b7280; --bright:#0d1117;
+  --accent:#4f46e5; --accent-soft:#eef0fe;
+  --green:#16a34a; --yellow:#d97706; --red:#dc2626; --cyan:#4f46e5;
+  --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"PingFang SC","Microsoft YaHei",sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{background:var(--bg);color:var(--text);font-family:var(--mono);font-size:13px;line-height:1.55}
-body{
-  background-image:
-    linear-gradient(rgba(255,255,255,.015) 1px,transparent 1px),
-    linear-gradient(90deg,rgba(255,255,255,.015) 1px,transparent 1px);
-  background-size:24px 24px;
-}
-::selection{background:var(--cyan);color:#000}
-a{color:var(--cyan);text-decoration:none}
+html,body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:14px;line-height:1.6;-webkit-font-smoothing:antialiased}
+::selection{background:var(--accent);color:#fff}
+a{color:var(--accent);text-decoration:none}
 a:hover{text-decoration:underline}
 
-/* ── 顶栏 ── */
-header{display:flex;align-items:center;gap:16px;padding:10px 18px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:50}
-.logo{font-weight:700;letter-spacing:.1em;color:var(--bright);white-space:nowrap}
-.logo .blink{color:var(--cyan);animation:bl 1.2s steps(1) infinite}
-@keyframes bl{50%{opacity:0}}
-nav{display:flex;gap:2px;flex-wrap:wrap}
-nav a{padding:4px 10px;border:1px solid transparent;color:var(--dim);font-size:12px;letter-spacing:.05em}
-nav a:hover{color:var(--text);text-decoration:none;border-color:var(--line)}
-nav a.active{color:var(--bright);border-color:var(--line);background:var(--panel2);box-shadow:inset 0 -2px 0 var(--cyan)}
-.ranges{margin-left:auto;display:flex;gap:2px}
-.ranges button{padding:3px 9px;background:transparent;border:1px solid var(--line);color:var(--dim);cursor:pointer;font-family:var(--mono);font-size:11px}
+/* header */
+header{display:flex;align-items:center;gap:18px;padding:12px 22px;border-bottom:1px solid var(--line);background:rgba(255,255,255,.85);backdrop-filter:blur(8px);position:sticky;top:0;z-index:50}
+.logo{font-weight:600;font-size:15px;letter-spacing:.02em;color:var(--bright);white-space:nowrap;display:flex;align-items:center;gap:9px}
+.status-dot{width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block}
+nav{display:flex;gap:4px;flex-wrap:wrap}
+nav a{padding:6px 12px;border-radius:8px;color:var(--dim);font-size:13px;font-weight:500}
+nav a:hover{color:var(--text);text-decoration:none;background:var(--panel2)}
+nav a.active{color:var(--accent);background:var(--accent-soft)}
+.ranges{margin-left:auto;display:flex;gap:4px;background:var(--panel2);padding:3px;border-radius:10px}
+.ranges button{padding:5px 12px;border:none;background:transparent;border-radius:7px;color:var(--dim);cursor:pointer;font-family:var(--font);font-size:12px;font-weight:500}
 .ranges button:hover{color:var(--text)}
-.ranges button.active{color:#000;background:var(--cyan);border-color:var(--cyan)}
-.status-dot{width:8px;height:8px;background:var(--green);display:inline-block;margin-right:5px;box-shadow:0 0 4px var(--green)}
+.ranges button.active{color:#fff;background:var(--accent)}
 
-/* ── 布局 ── */
-main{max-width:1280px;margin:0 auto;padding:18px}
+/* layout */
+main{max-width:1200px;margin:0 auto;padding:24px}
 .page{display:none}
 .page.active{display:block}
-.sect{margin-bottom:20px}
-.sect-title{font-size:11px;letter-spacing:.15em;color:var(--dim);margin-bottom:8px;text-transform:uppercase}
-.grid{display:grid;gap:10px}
-.cards{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
-.card,.panel{background:var(--panel);border:1px solid var(--line);padding:10px 12px}
-.card .lb{font-size:10px;letter-spacing:.12em;color:var(--dim);text-transform:uppercase}
-.card .vl{font-size:20px;color:var(--bright);margin-top:3px;white-space:nowrap}
-.card .vl small{font-size:11px;color:var(--dim)}
-.card .sub{font-size:10px;color:var(--dim);margin-top:2px}
-.v-green{color:var(--green)} .v-yellow{color:var(--yellow)} .v-red{color:var(--red)} .v-cyan{color:var(--cyan)}
+.sect{margin-bottom:26px}
+.sect-title{font-size:12px;font-weight:600;letter-spacing:.04em;color:var(--dim);margin-bottom:10px;text-transform:uppercase}
+.grid{display:grid;gap:14px}
+.cards{grid-template-columns:repeat(auto-fit,minmax(160px,1fr))}
+.card,.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+.card .lb{font-size:11px;letter-spacing:.06em;color:var(--dim);text-transform:uppercase;font-weight:600}
+.card .vl{font-size:24px;font-weight:650;color:var(--bright);margin-top:6px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.card .vl small{font-size:12px;color:var(--dim);font-weight:500}
+.card .sub{font-size:11px;color:var(--dim);margin-top:4px}
+.v-green{color:var(--green)} .v-yellow{color:var(--yellow)} .v-red{color:var(--red)} .v-cyan{color:var(--accent)} .v-dim{color:var(--dim)}
 
-/* ── 表格 ── */
-table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line)}
-th{font-size:10px;letter-spacing:.1em;color:var(--dim);text-transform:uppercase;text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);background:var(--panel2);white-space:nowrap}
-td{padding:6px 10px;border-bottom:1px solid #1c1c21;white-space:nowrap;font-size:12px}
+/* tables */
+table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+th{font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--dim);text-transform:uppercase;text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--panel2);white-space:nowrap}
+td{padding:10px 14px;border-bottom:1px solid var(--line);white-space:nowrap;font-size:13px}
 tr:last-child td{border-bottom:none}
-tbody tr:hover{background:#16161b}
+tbody tr:hover{background:var(--panel2)}
 td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
-td.mono{color:var(--dim);font-size:11px}
+td.mono{color:var(--dim);font-family:var(--mono);font-size:12px}
 .row-click{cursor:pointer}
 
-/* 状态色 */
+/* status */
 .st-ok{color:var(--green)} .st-err{color:var(--red)} .st-warn{color:var(--yellow)}
-.badge{display:inline-block;padding:0 6px;border:1px solid var(--line);font-size:10px;letter-spacing:.05em}
-.badge.ok{color:var(--green);border-color:#1e4d2e} .badge.err{color:var(--red);border-color:#5a1d1d}
+.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600}
+.badge.ok{color:var(--green);background:rgba(22,163,74,.10)}
+.badge.err{color:var(--red);background:rgba(220,38,38,.10)}
 
-/* ── 筛选栏 ── */
-.filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
-.filters select,.filters input,.filters button{background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:4px 8px;font-family:var(--mono);font-size:12px}
-.filters select:focus,.filters input:focus{outline:none;border-color:var(--cyan)}
-.filters button{cursor:pointer}
-.filters button:hover{border-color:var(--cyan);color:var(--cyan)}
-.filters label{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.1em}
+/* filters */
+.filters{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+.filters select,.filters input,.filters button{background:var(--panel);border:1px solid var(--line);color:var(--text);padding:6px 10px;border-radius:8px;font-family:var(--font);font-size:13px}
+.filters select:focus,.filters input:focus{outline:none;border-color:var(--accent)}
+.filters button{cursor:pointer;font-weight:500}
+.filters button:hover{border-color:var(--accent);color:var(--accent)}
+.filters label{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;font-weight:600}
 
-/* ── 条形图 ── */
-.bar-row{display:grid;grid-template-columns:130px 1fr 90px;gap:8px;align-items:center;padding:3px 0}
-.bar-row .bn{font-size:11px;color:var(--dim);overflow:hidden;text-overflow:ellipsis}
-.bar-track{height:14px;background:var(--panel2);border:1px solid var(--line);position:relative}
-.bar-fill{height:100%;background:var(--cyan);box-shadow:inset 0 0 0 1px rgba(0,0,0,.4)}
+/* bars */
+.bar-row{display:grid;grid-template-columns:140px 1fr 110px;gap:10px;align-items:center;padding:6px 0}
+.bar-row .bn{font-size:12px;color:var(--dim);overflow:hidden;text-overflow:ellipsis}
+.bar-track{height:10px;background:var(--panel2);border-radius:999px;overflow:hidden}
+.bar-fill{height:100%;background:var(--accent);border-radius:999px}
 .bar-fill.g{background:var(--green)} .bar-fill.y{background:var(--yellow)} .bar-fill.r{background:var(--red)}
-.bar-val{font-size:11px;text-align:right;color:var(--text);font-variant-numeric:tabular-nums}
+.bar-val{font-size:12px;text-align:right;color:var(--text);font-variant-numeric:tabular-nums}
 
-/* ── 趋势图（CSS bar chart）── */
-.trend{display:flex;align-items:flex-end;gap:3px;height:120px;padding:8px;background:var(--panel);border:1px solid var(--line)}
-.trend .col{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%;justify-content:flex-end}
-.trend .cb{width:100%;background:var(--cyan);box-shadow:inset 0 0 0 1px rgba(0,0,0,.4);min-height:2px}
-.trend .cb.in{background:var(--cyan)} .trend .cb.out{background:var(--yellow)}
+/* trend */
+.trend{display:flex;align-items:flex-end;gap:4px;height:140px;padding:12px;background:var(--panel);border:1px solid var(--line);border-radius:12px}
+.trend .col{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;height:100%;justify-content:flex-end}
+.trend .cb{width:100%;background:var(--accent);border-radius:4px 4px 0 0;min-height:2px}
+.trend .cb.in{background:var(--accent)} .trend .cb.out{background:var(--yellow)}
 .trend .cd{font-size:9px;color:var(--dim);transform:rotate(-45deg);transform-origin:top right;white-space:nowrap;margin-top:2px}
-.legend{display:flex;gap:14px;font-size:10px;color:var(--dim);margin-top:6px}
-.legend i{display:inline-block;width:8px;height:8px;margin-right:4px}
+.legend{display:flex;gap:16px;font-size:11px;color:var(--dim);margin-top:8px}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:middle}
 
-/* ── Tabs ── */
-.tabs{display:flex;gap:2px;margin-bottom:10px}
-.tabs button{padding:4px 12px;background:transparent;border:1px solid var(--line);color:var(--dim);cursor:pointer;font-family:var(--mono);font-size:11px;letter-spacing:.05em}
-.tabs button.active{color:#000;background:var(--cyan);border-color:var(--cyan)}
+/* tabs */
+.tabs{display:flex;gap:6px;margin-bottom:12px}
+.tabs button{padding:6px 14px;background:var(--panel);border:1px solid var(--line);border-radius:8px;color:var(--dim);cursor:pointer;font-family:var(--font);font-size:12px;font-weight:500}
+.tabs button.active{color:#fff;background:var(--accent);border-color:var(--accent)}
 
-/* ── 分页 ── */
-.pager{display:flex;gap:6px;align-items:center;margin-top:10px;font-size:11px;color:var(--dim)}
-.pager button{padding:2px 8px;background:var(--panel2);border:1px solid var(--line);color:var(--text);cursor:pointer;font-family:var(--mono)}
-.pager button:hover{border-color:var(--cyan)} .pager button:disabled{opacity:.35;cursor:default}
+/* pager */
+.pager{display:flex;gap:8px;align-items:center;margin-top:12px;font-size:12px;color:var(--dim)}
+.pager button{padding:4px 12px;background:var(--panel);border:1px solid var(--line);border-radius:8px;color:var(--text);cursor:pointer;font-family:var(--font);font-weight:500}
+.pager button:hover{border-color:var(--accent);color:var(--accent)} .pager button:disabled{opacity:.4;cursor:default}
 
-/* ── Overlay 详情 ── */
-.overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);display:none;z-index:100;align-items:center;justify-content:center}
+/* overlay */
+.overlay{position:fixed;inset:0;background:rgba(15,17,23,.45);display:none;z-index:100;align-items:center;justify-content:center;backdrop-filter:blur(2px)}
 .overlay.show{display:flex}
-.detail{width:640px;max-width:94vw;max-height:86vh;overflow:auto;background:var(--bg);border:1px solid var(--line);box-shadow:0 0 0 3px var(--panel2),0 0 24px rgba(0,0,0,.8)}
-.detail h3{padding:10px 14px;border-bottom:1px solid var(--line);font-size:12px;letter-spacing:.1em;color:var(--bright);display:flex;justify-content:space-between;align-items:center}
-.detail .x{cursor:pointer;color:var(--dim);border:1px solid var(--line);padding:0 7px}
+.detail{width:680px;max-width:94vw;max-height:88vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:0 20px 60px rgba(16,24,40,.25)}
+.detail h3{padding:14px 18px;border-bottom:1px solid var(--line);font-size:13px;font-weight:600;color:var(--bright);display:flex;justify-content:space-between;align-items:center}
+.detail .x{cursor:pointer;color:var(--dim);border:1px solid var(--line);border-radius:6px;padding:0 8px;font-size:14px}
 .detail .x:hover{color:var(--red);border-color:var(--red)}
-.detail table{margin:0;border:none}
-.detail td:first-child{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.08em;width:140px}
+.detail table{margin:0;border:none;border-radius:0}
+.detail td:first-child{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.06em;width:150px;font-weight:600}
 
-/* ── Providers / Settings ── */
-.prov-row{display:grid;grid-template-columns:110px 1fr 1fr 52px 70px;gap:8px;align-items:start;padding:8px 0;border-bottom:1px solid #1c1c21}
+/* providers / settings */
+.prov-row{display:grid;grid-template-columns:120px 1fr 1fr 56px 76px;gap:10px;align-items:start;padding:12px 0;border-bottom:1px solid var(--line)}
 .prov-row:last-child{border-bottom:none}
-.prov-row .pname{font-weight:700;padding-top:4px;font-size:12px}
-.prov-row .pname small{display:block;font-weight:400;color:var(--dim);font-size:10px;margin-top:2px}
-.prov-row input,.prov-row textarea{background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:4px 6px;font-family:var(--mono);font-size:12px;width:100%}
-.prov-row input:focus,.prov-row textarea:focus{outline:none;border-color:var(--cyan)}
-.prov-row textarea{resize:vertical;min-height:46px;line-height:1.5}
-.p-ctrl{display:flex;flex-direction:column;gap:6px;align-items:center;padding-top:2px}
-.toggle{width:34px;height:16px;border:1px solid var(--line);background:var(--panel2);cursor:pointer;position:relative;flex:none}
-.toggle:after{content:"";position:absolute;top:2px;left:2px;width:10px;height:10px;background:var(--dim)}
-.toggle.on{background:#12301d;border-color:var(--green)}
-.toggle.on:after{left:20px;background:var(--green)}
-.p-save{padding:4px 10px;background:transparent;border:1px solid var(--cyan);color:var(--cyan);cursor:pointer;font-family:var(--mono);font-size:11px;letter-spacing:.08em;width:100%}
-.p-save:hover{background:var(--cyan);color:#000}
+.prov-row .pname{font-weight:600;padding-top:6px;font-size:13px}
+.prov-row .pname small{display:block;font-weight:400;color:var(--dim);font-size:11px;margin-top:3px}
+.prov-row input,.prov-row textarea{background:var(--panel);border:1px solid var(--line);color:var(--text);padding:6px 8px;border-radius:8px;font-family:var(--font);font-size:13px;width:100%}
+.prov-row input:focus,.prov-row textarea:focus{outline:none;border-color:var(--accent)}
+.prov-row textarea{resize:vertical;min-height:48px;line-height:1.5}
+.p-ctrl{display:flex;flex-direction:column;gap:6px;align-items:center;padding-top:4px}
+.toggle{width:38px;height:20px;border:1px solid var(--line);background:var(--panel2);border-radius:999px;cursor:pointer;position:relative;flex:none;transition:background .15s}
+.toggle:after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;background:#fff;border-radius:50%;transition:left .15s;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+.toggle.on{background:var(--accent);border-color:var(--accent)}
+.toggle.on:after{left:20px}
+.p-save{padding:6px 12px;background:var(--panel);border:1px solid var(--accent);color:var(--accent);border-radius:8px;cursor:pointer;font-family:var(--font);font-size:12px;font-weight:600;width:100%}
+.p-save:hover{background:var(--accent);color:#fff}
 .p-save.saved{border-color:var(--green);color:var(--green)}
-.hint2{font-size:10px;color:var(--dim);margin-top:4px}
-.save-btn{padding:5px 14px;background:transparent;border:1px solid var(--cyan);color:var(--cyan);cursor:pointer;font-family:var(--mono);letter-spacing:.08em}
-.save-btn:hover{background:var(--cyan);color:#000}
-.msg{font-size:11px;color:var(--green);min-height:16px;margin-top:6px}
-textarea{background:var(--panel2);border:1px solid var(--line);color:var(--text);font-family:var(--mono);font-size:12px;width:100%;padding:6px;resize:vertical}
-textarea:focus{outline:none;border-color:var(--cyan)}
-.hint{font-size:10px;color:var(--dim);margin-top:4px}
-.empty{padding:24px;text-align:center;color:var(--dim);border:1px dashed var(--line);font-size:12px}
+.hint2{font-size:11px;color:var(--dim);margin-top:5px}
+.save-btn{padding:6px 16px;background:var(--panel);border:1px solid var(--accent);color:var(--accent);border-radius:8px;cursor:pointer;font-family:var(--font);font-weight:600;font-size:12px}
+.save-btn:hover{background:var(--accent);color:#fff}
+.msg{font-size:12px;color:var(--green);min-height:16px;margin-top:8px}
+textarea{background:var(--panel);border:1px solid var(--line);color:var(--text);font-family:var(--font);font-size:13px;width:100%;padding:8px;border-radius:8px;resize:vertical}
+textarea:focus{outline:none;border-color:var(--accent)}
+.hint{font-size:11px;color:var(--dim);margin-top:5px}
+.empty{padding:28px;text-align:center;color:var(--dim);border:1px dashed var(--line);border-radius:12px;font-size:13px;background:var(--panel)}
 </style>
 </head>
 <body>
 <header>
-  <div class="logo"><span class="status-dot"></span>AI·RESOURCE·MONITOR<span class="blink">▌</span></div>
+  <div class="logo"><span class="status-dot"></span>AI Resource Monitor</div>
   <nav id="nav">
     <a href="#overview" data-page="overview">OVERVIEW</a>
     <a href="#requests" data-page="requests">REQUESTS</a>
@@ -161,7 +156,8 @@ textarea:focus{outline:none;border-color:var(--cyan)}
 </header>
 <main>
   <section class="page" id="page-overview">
-    <div class="sect"><div class="sect-title">OVERVIEW · 我现在用了多少 AI 资源</div>
+    <div class="sect"><div class="sect-title" id="ov-title">OVERVIEW · 历史用量</div>
+      <div id="ov-empty" class="empty" style="display:none;margin-bottom:12px">NO USAGE DATA YET<br><span style="color:var(--dim);font-size:11px">Start using an AI resource to begin monitoring. Any request routed through the gateway is recorded here — historical data appears automatically.</span></div>
       <div class="grid cards" id="ov-cards"></div>
     </div>
   <div class="grid" style="grid-template-columns:1fr 1fr">
@@ -170,7 +166,7 @@ textarea:focus{outline:none;border-color:var(--cyan)}
       <div class="legend"><span><i style="background:var(--cyan)"></i>INPUT</span><span><i style="background:var(--yellow)"></i>OUTPUT</span></div>
     </div>
   </div>
-  <div class="sect"><div class="sect-title">RECENT EVENTS</div>
+  <div class="sect"><div class="sect-title">RECENT REQUESTS <span style="color:var(--dim);font-weight:400;font-size:10px">last 20 events · distinct from the historical aggregate above</span></div>
     <div style="overflow-x:auto"><table>
       <thead><tr><th>Time</th><th>Resource</th><th>Provider</th><th>Model</th><th class="num">Tokens</th><th class="num">Cost</th><th class="num">Latency</th><th>Status</th></tr></thead>
       <tbody id="ov-events"></tbody>
@@ -185,12 +181,13 @@ textarea:focus{outline:none;border-color:var(--cyan)}
         <label>Model</label><select id="f-model"></select>
         <label>Source</label><select id="f-source"></select>
         <label>Project</label><select id="f-project"></select>
+        <label>Client</label><select id="f-client"></select>
         <label>Status</label><select id="f-status"><option value="">ALL</option><option value="200">200</option><option value="400">400</option><option value="401">401</option><option value="404">404</option><option value="429">429</option><option value="500">500</option><option value="502">502</option></select>
         <button id="f-apply">FILTER</button>
         <button id="f-reset">RESET</button>
       </div>
       <div style="overflow-x:auto"><table>
-        <thead><tr><th>Time</th><th>Source</th><th>Project</th><th>Provider</th><th>Model</th><th class="num">Tokens</th><th class="num">Cost</th><th class="num">Latency</th><th>Status</th></tr></thead>
+        <thead><tr><th>Time</th><th>Source</th><th>Project</th><th>Client</th><th>Provider</th><th>Model</th><th class="num">Tokens</th><th class="num">Cost</th><th class="num">Latency</th><th>Status</th></tr></thead>
         <tbody id="req-body"></tbody>
       </table></div>
       <div class="pager" id="req-pager"></div>
@@ -204,6 +201,7 @@ textarea:focus{outline:none;border-color:var(--cyan)}
         <button data-dim="model">BY MODEL</button>
         <button data-dim="source">BY SOURCE</button>
         <button data-dim="project">BY PROJECT</button>
+        <button data-dim="client">BY CLIENT</button>
       </div>
       <div class="panel" id="cost-panel"></div>
     </div>
@@ -216,6 +214,7 @@ textarea:focus{outline:none;border-color:var(--cyan)}
         <button data-dim="model">BY MODEL</button>
         <button data-dim="source">BY SOURCE</button>
         <button data-dim="project">BY PROJECT</button>
+        <button data-dim="client">BY CLIENT</button>
       </div>
       <div class="panel" id="token-panel"></div>
     </div>
@@ -245,9 +244,10 @@ textarea:focus{outline:none;border-color:var(--cyan)}
     </div>
     <div class="sect"><div class="sect-title">RESOURCE INVENTORY</div>
       <div style="overflow-x:auto"><table>
-        <thead><tr><th>Resource</th><th>Provider</th><th>Type</th><th>Mode</th><th class="num">Requests</th><th class="num">Tokens</th><th class="num">Cache</th><th class="num">Errors</th><th class="num">Avg Latency</th><th>Cost</th><th>Status</th><th class="num">Balance</th><th class="num">Quota</th><th class="num">Remaining</th><th>Obs</th><th>Last Obs</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Resource</th><th>Provider</th><th>Type</th><th>Mode</th><th class="num">Requests</th><th class="num">Tokens</th><th class="num">Cache</th><th class="num">Errors</th><th class="num">Avg Latency</th><th class="num">Err%</th><th class="num">Tok/Req</th><th class="num">Cost/1K</th><th>Health</th><th>Cost</th><th>Status</th><th class="num">Balance</th><th class="num">Quota</th><th class="num">Remaining</th><th>Obs</th><th>Last Obs</th><th>Actions</th></tr></thead>
         <tbody id="res-body"></tbody>
       </table></div>
+    <div id="res-cur-note" class="hint2" style="margin-top:6px;color:var(--yellow)"></div>
     </div>
     <div class="sect"><div class="sect-title">UNREGISTERED USAGE</div>
       <div id="res-unreg"></div>
@@ -261,7 +261,7 @@ textarea:focus{outline:none;border-color:var(--cyan)}
 
   <section class="page" id="page-providers">
     <div class="sect"><div class="sect-title">PROVIDERS · 配置</div>
-      <div class="hint2" style="margin-bottom:8px">Dashboard 统计仅来自真实调用：配置 Key 后需把 AI 客户端 base_url 指向 <span class="mono" style="color:var(--cyan)">http://127.0.0.1:8787/gateway/&lt;provider&gt;</span> 发起调用才会产生数据。API Key 仅存本机 data/config.yaml，不落库、不下发前端。</div>
+      <div class="hint2" style="margin-bottom:8px">Dashboard 统计仅来自真实调用：配置 Key 后需把 AI 客户端 base_url 指向 <span class="mono" style="color:var(--cyan)">http://127.0.0.1:8787/gateway/&lt;provider&gt;</span> 发起调用才会产生数据。API Key 绝不写入 <span class="mono">data/config.yaml</span>（写了会被静默丢弃），仅存环境变量或本机凭据文件，不落事件库、不下发前端。<br><b>归因提示</b>：想看到「哪个 Resource / Project / Client」用了多少，请让客户端带请求头 <span class="mono">X-Monitor-Resource</span> / <span class="mono">X-Monitor-Project</span> / <span class="mono">X-Monitor-Client</span>；或在 config.yaml 设置 <span class="mono">providers.&lt;name&gt;.default_resource_id</span> / <span class="mono">default_project</span> 作为无头流量的兜底。未配置时这类流量记为 <span class="mono">Unknown</span>（绝不猜测）。<br>自定义 OpenAI-compatible Provider：在 config.yaml 的 <span class="mono">providers</span> 段新增一项（任意名称）+ <span class="mono">base_url</span> + 启用，即复用同一套网关（无需第二套代理）。</div>
       <div class="panel" id="prov-panel"></div>
     </div>
   </section>
@@ -333,6 +333,7 @@ textarea:focus{outline:none;border-color:var(--cyan)}
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const API='/api';
 let RANGE='all';
+let EFF={};
 const fmt={n:v=>(v==null?'-':Number(v).toLocaleString()),
   cost:v=>v==null?'-':(v>=0.01?Number(v).toFixed(4):Number(v).toExponential(2)),
   ms:v=>v==null?'-':Number(v).toFixed(0)+'ms',
@@ -352,29 +353,45 @@ function route(){
 window.addEventListener('hashchange',route);
 
 /* ── Overview ──
-   顶部摘要固定取 TODAY 范围（符合"Today's Requests/Tokens/Cost/Errors"语义）；
-   下方 COST BY PROVIDER / TREND 仍随全局 RANGE 切换。
+   顶部「历史用量」卡片随全局 RANGE 切换（默认 ALL = 全量历史，打开即见历史，
+   不依赖今日是否发起请求）；下方 COST BY PROVIDER / TREND 同样随 RANGE。
+   明确区分：上方卡片 = 历史聚合（Historical Usage）；底部 RECENT REQUESTS = 最近 20 条事件。
    成本语义：cost_by_currency 为空（= 未知）→ 显示 —，绝不显示 0 / ¥0。 */
 async function renderOverview(){
+  const rangeLabel={all:'ALL-TIME',today:'TODAY','7d':'LAST 7D','30d':'LAST 30D'}[RANGE]||RANGE.toUpperCase();
+  $('#ov-title').textContent='OVERVIEW · 历史用量 · '+rangeLabel;
   const [ov,resU,prov,trend,ev]=await Promise.all([
-    get('/overview',{range:'today'}),
+    get('/overview'),                         // 全局 RANGE（默认 all = 全量历史）
     get('/resources/usage'),
     get('/analytics/cost',{dim:'provider'}),
     get('/analytics/tokens/timeseries',{days:14}),
     get('/events',{limit:20})]);
   const totalRes=(resU.resources||[]).length;
+  const totalReq=ov.requests||0;
   const costObj=ov.cost_by_currency||{};
   const cost=Object.keys(costObj).length
     ? Object.entries(costObj).map(([c,v])=>fmt.money(v,c)+Number(v).toFixed(4)).join(' + ')
     : '—';                                  // NULL cost → —（不伪造 0）
   const errs=ov.errors||0;
+  $('#ov-empty').style.display = totalReq ? 'none' : 'block';
+  const card=(lb,vl,cl,sub)=>`<div class="card"><div class="lb">${lb}</div><div class="vl ${cl||''}">${vl}</div>${sub?`<div class="sub">${sub}</div>`:''}</div>`;
   $('#ov-cards').innerHTML=[
-    ['TOTAL RESOURCES',fmt.n(totalRes),''],
-    ['TODAY REQUESTS',fmt.n(ov.requests),''],
-    ['TODAY TOKENS',fmt.n(ov.total_tokens),''],
-    ['TODAY COST',cost,cost==='—'?'v-dim':''],
-    ['TODAY ERRORS',fmt.n(errs),errs>0?'v-red':'v-green'],
-  ].map(([lb,vl,cl])=>`<div class="card"><div class="lb">${lb}</div><div class="vl ${cl}">${vl}</div></div>`).join('');
+    card('RESOURCES',fmt.n(totalRes),'',''),
+    card('REQUESTS',fmt.n(totalReq),'',''),
+    card('INPUT',fmt.n(ov.input_tokens),'',''),
+    card('OUTPUT',fmt.n(ov.output_tokens),'',''),
+    card('TOTAL',fmt.n(ov.total_tokens),'',''),
+    card('CACHE',fmt.n(ov.cache_read_tokens),'',''),
+    card('CACHE HIT',fmt.pct(ov.cache_hit_rate),ov.cache_hit_rate==null?'v-dim':'v-green',
+      // 覆盖率 = 上报了 cache 字段的请求 / 总请求。没有它，用户会误以为
+      // CACHE HIT 是全局命中率；20% 命中 + 18% 覆盖 与 20% 命中 + 95% 覆盖
+      // 是完全不同的判断。
+      [ ov.cache_read_ratio!=null?('读命中 '+fmt.pct(ov.cache_read_ratio)):'',
+        ov.cache_coverage!=null?('覆盖 '+fmt.pct(ov.cache_coverage)+' · '+fmt.n(ov.cache_observable)+'/'+fmt.n(totalReq)):''
+      ].filter(Boolean).join(' · ')),
+    card('ERRORS',fmt.n(errs),errs>0?'v-red':'v-green',''),
+    card('COST',cost,cost==='—'?'v-dim':'',''),
+  ].join('');
   const rows=prov.rows||[];
   const max=Math.max(1,...rows.map(r=>r.cost??0));
   $('#ov-provider').innerHTML=rows.length?rows.map(r=>`<div class="bar-row"><div class="bn">${esc(r.name)}</div><div class="bar-track"><div class="bar-fill" style="width:${((r.cost??0)/max*100).toFixed(1)}%"></div></div><div class="bar-val">${fmt.money(r.cost,r.currency)}${(r.cost??0).toFixed(4)}</div></div>`).join('')
@@ -407,24 +424,30 @@ function renderRecentEvents(events){
 }
 
 /* ── Requests ── */
-const reqState={page:1,provider:'',model:'',source:'',project:'',status:''};
+const reqState={page:1,provider:'',model:'',source:'',project:'',client:'',status:''};
 async function loadFilters(){
-  const [prov,src,prj]=await Promise.all([get('/providers'),get('/sources'),get('/projects')]);
+  const [prov,src,prj,cl]=await Promise.all([get('/providers'),get('/sources'),get('/projects'),get('/clients')]);
   $('#f-provider').innerHTML='<option value="">ALL</option>'+prov.providers.filter(p=>p.enabled).map(p=>`<option>${esc(p.name)}</option>`).join('');
   $('#f-source').innerHTML='<option value="">ALL</option>'+src.sources.map(s=>`<option>${esc(s)}</option>`).join('');
   $('#f-project').innerHTML='<option value="">ALL</option>'+prj.projects.map(p=>`<option>${esc(p)}</option>`).join('');
+  $('#f-client').innerHTML='<option value="">ALL</option>'
+    +'<option value="__NULL__">Unknown (unattributed)</option>'
+    +cl.clients.filter(c=>c && c!=='Unknown').map(c=>`<option>${esc(c)}</option>`).join('');
 }
 async function renderRequests(){
   const q={page:reqState.page,page_size:20,...(reqState.provider&&{provider:reqState.provider}),
     ...(reqState.model&&{model:reqState.model}),...(reqState.source&&reqState.source!=='ALL'&&{source:reqState.source}),
-    ...(reqState.project&&reqState.project!=='ALL'&&{project:reqState.project}),...(reqState.status&&{status:reqState.status})};
+    ...(reqState.project&&reqState.project!=='ALL'&&{project:reqState.project}),
+    ...(reqState.client&&reqState.client!=='ALL'&&{client:reqState.client}),...(reqState.status&&{status:reqState.status})};
+  // 注意：__NULL__ 是「未归因」哨兵（由后端 query_requests 解释为 client IS NULL），
+  // 避免把展示标签 "Unknown" 误当作字面量过滤。
   const d=await get('/requests',q);
   $('#req-body').innerHTML=(d.items||[]).map(r=>`<tr class="row-click" data-id="${esc(r.request_id)}">
-    <td class="mono">${fmt.time(r.timestamp)}</td><td>${esc(r.source)}</td><td>${esc(r.project)}</td>
+    <td class="mono">${fmt.time(r.timestamp)}</td><td>${esc(r.source)}</td><td>${esc(r.project)}</td><td>${esc(r.client)}</td>
     <td>${esc(r.provider)}</td><td class="mono">${esc(r.model)}</td>
     <td class="num">${fmt.n(r.total_tokens)}</td><td class="num">${r.cost==null?'-':fmt.money(r.cost,r.currency)+Number(r.cost).toFixed(4)}</td>
     <td class="num">${fmt.ms(r.latency_ms)}</td>
-    <td><span class="badge ${r.status_code>=400?'err':'ok'}">${r.status_code}</span></td></tr>`).join('')||'<tr><td colspan="9"><div class="empty">NO REQUESTS<br><span style="color:var(--dim);font-size:11px">No AI requests recorded yet.</span></div></td></tr>';
+    <td><span class="badge ${r.status_code>=400?'err':'ok'}">${r.status_code}</span></td></tr>`).join('')||'<tr><td colspan="10"><div class="empty">NO REQUESTS<br><span style="color:var(--dim);font-size:11px">No AI requests recorded yet.</span></div></td></tr>';
   const pages=d.pages||1;
   $('#req-pager').innerHTML=`<button ${reqState.page<=1?'disabled':''} data-pg="${reqState.page-1}">◀</button>
     <span>PAGE ${d.page}/${pages} · ${d.total} ITEMS</span>
@@ -440,7 +463,11 @@ async function showDetail(id){
   const rows=[
     ['REQUEST ID',`<span class="mono">${d.request_id}</span>`],
     ['Timestamp',fmt.time(d.timestamp)],['Provider',d.provider],['Model',d.model],
-    ['Source',d.source],['Project',d.project],['Endpoint',`<span class="mono">${esc(d.endpoint)}</span>`],
+    ['Source',d.source],['Project',d.project],
+    ['Project Attr',(d.metadata&&d.metadata.project_attribution_source)||'-'],
+    ['Client',d.client||'-'],
+    ['Client Attr',(d.metadata&&d.metadata.client_attribution_source)||'-'],
+    ['Endpoint',`<span class="mono">${esc(d.endpoint)}</span>`],
     ['Input Tokens',fmt.n(d.input_tokens)],['Output Tokens',fmt.n(d.output_tokens)],['Total Tokens',fmt.n(d.total_tokens)],
     ['Latency',fmt.ms(d.latency_ms)],['Status',`<span class="${d.status_code>=400?'v-red':'v-green'}">${d.status_code}</span>`],
     ['Est. Cost',d.cost==null?'-':fmt.money(d.cost,d.currency)+Number(d.cost).toFixed(6)],
@@ -499,9 +526,9 @@ async function renderPerformance(){
 async function renderProviders(){
   const d=await fetch('/api/providers').then(r=>r.json());
   $('#prov-panel').innerHTML=d.providers.map(p=>`<div class="prov-row" data-name="${esc(p.name)}">
-    <div class="pname">${esc(p.name)}<small>${p.enabled?'ON':'OFF'} · ${p.has_key?(p.key_count||1)+' key':'未配置'}</small></div>
+    <div class="pname">${esc(p.name)}<small>${p.enabled?'ON':'OFF'} · ${p.credential_source==='environment'?'ENV':p.credential_source==='manual'?'MANUAL':'未配置'}</small></div>
     <div><input class="p-url" value="${esc(p.base_url||'')}" placeholder="base_url"><div class="hint2">Base URL</div></div>
-    <div><textarea class="p-keys" rows="2" placeholder="${p.has_key?'已有 '+(p.key_count||1)+' 个 Key · 粘贴新 Key 将整体替换（留空则保留）':'每行一个 API Key'}"></textarea><div class="hint2">API Keys（每行一个，支持多 Key 轮换；仅存本机，不回显）</div></div>
+    <div><textarea class="p-keys" rows="2" placeholder="${p.credential_source==='manual'?'已存 manual key · 留空保存将清除':'粘贴 API Key（单行，仅存本机，不回显）'}"></textarea><div class="hint2">API Key（单行；仅本机，不回显；环境变量优先于此处）</div></div>
     <div class="p-ctrl"><div class="toggle ${p.enabled?'on':''}" title="enable/disable"></div><span style="font-size:10px;color:${p.enabled?'var(--green)':'var(--dim)'}">${p.enabled?'ENABLED':'DISABLED'}</span></div>
     <div><button class="p-save">SAVE</button></div>
   </div>`).join('')||'<div class="empty">无 Provider</div>';
@@ -518,16 +545,23 @@ async function renderProviders(){
 async function saveProv(row){
   const name=row.dataset.name,url=row.querySelector('.p-url').value;
   const keys=row.querySelector('.p-keys').value.split('\n').map(s=>s.trim()).filter(Boolean);
-  const body={base_url:url};
-  if(keys.length) body.api_keys=keys;   // 留空 = 保留现有 Key
   const btn=row.querySelector('.p-save');
   try{
-    const r=await fetch(`/api/providers/${name}`,{method:'PUT',headers:{'content-type':'application/json'},
-      body:JSON.stringify({base_url:url,api_keys:keys})});
-    if(!r.ok){btn.textContent='FAIL';btn.classList.add('saved');btn.style.borderColor='var(--red)';btn.style.color='var(--red)';
-      setTimeout(()=>{btn.textContent='SAVE';btn.classList.remove('saved');btn.style.borderColor='';btn.style.color=''},1500);return}
+    // 1) provider 配置（base_url）；绝不发送 api_key 给 config
+    await fetch(`/api/providers/${name}`,{method:'PUT',headers:{'content-type':'application/json'},
+      body:JSON.stringify({base_url:url})});
+    // 2) manual 凭据：有值存，留空则清除（环境变量始终优先，不会被覆盖）
+    if(keys.length){
+      const r=await fetch(`/api/credentials/${name}`,{method:'PUT',headers:{'content-type':'application/json'},
+        body:JSON.stringify({api_key:keys[0]})});
+      if(!r.ok){btn.textContent='FAIL';btn.classList.add('saved');btn.style.borderColor='var(--red)';btn.style.color='var(--red)';
+        setTimeout(()=>{btn.textContent='SAVE';btn.classList.remove('saved');btn.style.borderColor='';btn.style.color=''},1500);return}
+    }else{
+      await fetch(`/api/credentials/${name}`,{method:'DELETE'});
+    }
     btn.textContent='SAVED ✓';btn.classList.add('saved');
     setTimeout(()=>{btn.textContent='SAVE';btn.classList.remove('saved')},1400);
+    renderProviders();
   }catch(e){
     btn.textContent='FAIL';
     setTimeout(()=>btn.textContent='SAVE',1400);
@@ -535,35 +569,132 @@ async function saveProv(row){
 }
 
 /* ── Resources ── */
+/* 多币种时绝不给出单一汇总金额（无汇率、不换算），分组列出。 */
+const costAmount=r=>{
+  const bc=r.cost_by_currency||{};
+  const keys=Object.keys(bc);
+  if(keys.length>1)return keys.map(k=>`${fmt.money(bc[k],k)}${Number(bc[k]).toFixed(4)}`).join(' <span style="color:var(--dim)">+</span> ');
+  if(r.cost==null)return '<span style="color:var(--dim)">N/A</span>';
+  return fmt.money(r.cost,r.cost_currency)+Number(r.cost).toFixed(4);
+};
 const costBadge=r=>{
-  const amt=r.cost;
-  if(r.cost_status==='known')return `<span class="v-green">${fmt.money(amt,r.cost_currency)}${Number(amt).toFixed(4)}</span> <span class="badge ok">KNOWN</span>`;
-  if(r.cost_status==='mixed')return `<span class="v-yellow">${fmt.money(amt,r.cost_currency)}${Number(amt).toFixed(4)}</span> <span class="badge" style="color:var(--yellow);border-color:#5a4a1d">MIXED</span>`;
+  const amt=costAmount(r);
+  const mixed=r.mixed_currency
+    ?' <span class="badge" style="color:var(--yellow);border-color:#5a4a1d">MULTI-CURRENCY</span>':'';
+  if(r.cost_status==='known')return `<span class="v-green">${amt}</span>${mixed||' <span class="badge ok">KNOWN</span>'}`;
+  if(r.cost_status==='mixed')return `<span class="v-yellow">${amt}</span>${mixed||' <span class="badge" style="color:var(--yellow);border-color:#5a4a1d">MIXED</span>'}`;
   if(r.cost_status==='unknown')return `<span style="color:var(--dim)">N/A</span> <span class="badge" style="color:var(--yellow);border-color:#5a4a1d">UNKNOWN</span>`;
   return `<span style="color:var(--dim)">N/A</span> <span class="badge" style="color:var(--dim)">UNUSED</span>`;
 };
 const usedBadge=r=>r.requests>0?`<span class="v-green">USED</span>`:`<span style="color:var(--dim)">UNUSED</span>`;
 /* Observation 四态徽标：NO OBSERVATION / KNOWN / UNAVAILABLE / ERROR（NULL ≠ 0） */
 const obsBadge=s=>{
-  if(!s||s.observation_status==='no_observation')return `<span class="badge" style="color:var(--dim)">NO OBSERVATION</span>`;
+  if(!s||!s.observation_status)return `<span class="badge" style="color:var(--dim)">NO OBSERVATION</span>`;
+  if(s.stale)return `<span class="badge" style="color:var(--dim)">STALE</span>`;
+  if(s.observation_status==='no_observation')return `<span class="badge" style="color:var(--dim)">NO OBSERVATION</span>`;
   if(s.observation_status==='known')return `<span class="badge ok">KNOWN</span>`;
   if(s.observation_status==='unavailable')return `<span class="badge" style="color:var(--yellow);border-color:#5a4a1d">UNAVAILABLE</span>`;
   if(s.observation_status==='error')return `<span class="badge err">ERROR</span>`;
   return `<span class="badge" style="color:var(--dim)">—</span>`;
 };
+// Resource 卡片主状态：严格分离 Health 与 Observation。
+// 主：Resource Health（基于真实请求，authoritative）→ 回答"Resource 本身是否健康"
+// 副：Observation（OBS: 前缀）→ 回答"Monitor 能否完成观察"，stale 优先
+function resStateBadge(s){
+  const h=s&&s.health&&s.health.health?s.health.health:'unknown';
+  const hMap={healthy:'<span class="badge ok">HEALTHY</span>',degraded:'<span class="badge" style="color:var(--yellow);border-color:#5a4a1d">DEGRADED</span>',unavailable:'<span class="badge err">UNAVAILABLE</span>',unknown:'<span class="badge" style="color:var(--dim)">UNKNOWN</span>'};
+  const health=hMap[h]||`<span class="badge" style="color:var(--dim)">${esc(h)}</span>`;
+  let obs;
+  if(!s||!s.observation_status||s.observation_status==='no_observation')obs='<span class="badge" style="color:var(--dim)">OBS: NONE</span>';
+  else if(s.stale)obs='<span class="badge" style="color:var(--dim)">OBS: STALE</span>';
+  else if(s.observation_status==='error')obs='<span class="badge err">OBS: ERROR</span>';
+  else if(s.observation_status==='known')obs='<span class="badge ok">OBS: OK</span>';
+  else if(s.observation_status==='unavailable')obs='<span class="badge" style="color:var(--yellow);border-color:#5a4a1d">OBS: UNAVAIL</span>';
+  else obs=`<span class="badge" style="color:var(--dim)">OBS: ${esc(s.observation_status)}</span>`;
+  return health+' '+obs;
+}
+/* Cost / 1K tokens — per currency; NULL/empty → N/A; never 0; no FX */
+function fmtSmall(v){const n=Number(v);if(n===0)return '0.0000';if(Math.abs(n)>=0.01)return n.toFixed(4);if(Math.abs(n)>=0.0001)return n.toFixed(6);return n.toExponential(2);}
+function cost1kHTML(effRow){
+  if(!effRow)return '<span style="color:var(--dim)">N/A</span>';
+  const c=effRow.cost_by_currency||{};
+  const keys=Object.keys(c);
+  if(!keys.length)return '<span style="color:var(--dim)">N/A</span>';
+  return keys.map(k=>{const v=c[k].cost_per_1k_tokens;
+    return v==null?`<span style="color:var(--dim)">${esc(k)} N/A</span>`
+      :`<span style="${k==='USD'?'color:var(--cyan)':'color:var(--green)'}">${fmt.money(0,k)}${fmtSmall(v)}</span>`;
+  }).join(' · ');
+}
+/* Inventory Health indication (NOT authoritative): pure error-presence signal.
+   Authoritative 4-state verdict comes only from /health in the Detail. */
+function healthInd(r){
+  if(!r||!r.requests)return `<span class="badge" style="color:var(--dim)">UNKNOWN</span>`;
+  if(r.error_count>0)return `<span class="badge" style="color:var(--yellow);border-color:#5a4a1d" title="indication from error count — open detail for authoritative health">HAS ERR</span>`;
+  return `<span class="badge ok" title="no errors observed — open detail for authoritative health">CLEAN</span>`;
+}
+/* Trend sparkline (CSS .trend only, no chart lib). Direction = last half vs first half of returned days. */
+function buildTrend(rows){
+  if(!rows||!rows.length)return `<div class="sect-title" style="margin-top:12px">TREND (30D)</div><div class="hint2">No usage data in window.</div>`;
+  const maxR=Math.max(1,...rows.map(x=>x.requests||0));
+  const reqBars=rows.map(x=>`<div class="col"><div class="cb in" style="height:${Math.max(2,Math.round((x.requests||0)/maxR*100))}%"></div><div class="cd">${esc((x.day||'').slice(5))}</div></div>`).join('');
+  const curSet=new Set(); rows.forEach(x=>{const c=x.cost_by_currency||{};Object.keys(c).forEach(k=>curSet.add(k));});
+  let costHtml='';
+  if(curSet.size===1){
+    const cur=[...curSet][0];
+    const maxC=Math.max(1,...rows.map(x=>(x.cost_by_currency&&x.cost_by_currency[cur])||0));
+    const costBars=rows.map(x=>`<div class="col"><div class="cb out" style="height:${Math.max(2,Math.round(((x.cost_by_currency&&x.cost_by_currency[cur])||0)/maxC*100))}%"></div><div class="cd">${esc((x.day||'').slice(5))}</div></div>`).join('');
+    costHtml=`<div class="sect-title" style="margin-top:8px">COST TREND (30D · ${esc(cur)})</div><div class="trend" style="height:80px">${costBars}</div>`;
+  }else if(curSet.size>1){
+    costHtml=`<div class="hint2" style="margin-top:8px">Cost trend hidden: multiple currencies in window (no FX).</div>`;
+  }
+  let dir='—';
+  if(rows.length>=14){
+    const half=Math.floor(rows.length/2);
+    const sa=rows.slice(0,half).reduce((s,x)=>s+(x.requests||0),0);
+    const sb=rows.slice(half).reduce((s,x)=>s+(x.requests||0),0);
+    dir=sb>sa?'↑ more used':sb<sa?'↓ less used':'≈ stable';
+  }
+  return `<div class="sect-title" style="margin-top:12px">TREND (30D)</div>
+    <div class="hint2">Requests per day · direction (last half vs first half): ${dir}</div>
+    <div class="trend" style="height:80px">${reqBars}</div>
+    ${costHtml}`;
+}
+/* Comparison: reuse EFF (all resources, single fetch). Health verdict only for opened resource (authoritative /health); others show — (no N+1). */
+function buildComparison(id, hBadge){
+  const all=Object.keys(EFF);
+  if(!all.length)return '';
+  const rowFor=rid=>{
+    const e=EFF[rid];
+    const c1k=e?cost1kHTML(e):'<span style="color:var(--dim)">N/A</span>';
+    const tpr=(e&&e.tokens&&e.tokens.tokens_per_request!=null)?e.tokens.tokens_per_request.toFixed(1):'—';
+    const er=(e&&e.error_rate!=null)?fmt.pct(e.error_rate):'—';
+    const lat=(e&&e.latency&&e.latency.avg_latency_ms!=null)?fmt.ms(e.latency.avg_latency_ms):'—';
+    return `<tr style="${rid===id?'background:var(--panel2)':''}"><td class="mono">${esc(rid)}</td><td class="num">${c1k}</td><td class="num">${tpr}</td><td class="num">${er}</td><td class="num">${lat}</td><td>${rid===id?hBadge:'<span style="color:var(--dim)">—</span>'}</td></tr>`;
+  };
+  const ordered=[id,...all.filter(k=>k!==id)];
+  return `<div class="sect-title" style="margin-top:12px">COMPARISON <span style="color:var(--dim);font-weight:400;font-size:10px">cost comparable only within same currency · no FX</span></div>
+    <div style="overflow-x:auto"><table><thead><tr><th>Resource</th><th class="num">Cost/1K</th><th class="num">Tok/Req</th><th class="num">Err%</th><th class="num">Avg Lat</th><th>Health</th></tr></thead><tbody>
+    ${ordered.map(rowFor).join('')}
+    </tbody></table></div>
+    <div class="hint2">Health verdict shown only for the opened resource (authoritative /health); open others' detail for theirs. Cross-currency cost not comparable.</div>`;
+}
 async function renderResources(){
-  let d, st;
-  try{ [d, st]=await Promise.all([get('/resources/usage'), get('/resources/state')]); }catch(e){
+  let d, st, effResp;
+  try{ [d, st, effResp]=await Promise.all([get('/resources/usage'), get('/resources/state'), get('/efficiency/by_dim',{dim:'resource_id'})]); }catch(e){
     $('#res-cards').innerHTML='<div class="empty" style="margin:auto">RESOURCE DATA UNAVAILABLE<br><span style="color:var(--dim);font-size:11px">'+esc(e.message)+'</span></div>';
     $('#res-body').innerHTML='';$('#res-unatt').innerHTML='';$('#res-unreg').innerHTML='';return;
   }
   const rs=d.resources||[];
   const states={};(st.resources||[]).forEach(s=>states[s.resource_id]=s);
+  const effMap={};(effResp&&effResp.rows||[]).forEach(e=>{ if(e&&e.name) effMap[e.name]=e; });
+  EFF=effMap;
+  const curSet=new Set(); Object.values(effMap).forEach(e=>{ const c=e.cost_by_currency||{}; Object.keys(c).forEach(k=>curSet.add(k)); });
+  const multiCur=curSet.size>1;
   const num=v=>v===null||v===undefined?'—':fmt.n(v);   // NULL observation 数值 → —（绝不 0）
   $('#res-cards').innerHTML=rs.map(r=>`<div class="card res-card" data-res="${esc(r.resource_id)}" style="cursor:pointer">
     <div class="lb">${esc(r.resource_id)}${r.enabled===false?' <span style="color:var(--yellow)">[DISABLED]</span>':''}</div>
     <div class="vl" style="font-size:14px">${esc(r.resource_name||r.resource_id)}</div>
-    <div class="sub">${esc(r.resource_type||'?')} · ${esc(r.billing_mode||'?')} · ${usedBadge(r)} · ${obsBadge(states[r.resource_id])}</div>
+    <div class="sub">${esc(r.resource_type||'?')} · ${esc(r.billing_mode||'?')} · ${usedBadge(r)} · ${resStateBadge(states[r.resource_id])}</div>
   </div>`).join('')||'<div class="empty" style="margin:auto">NO RESOURCES CONFIGURED<br><span style="color:var(--dim);font-size:11px">点击右上角 + ADD RESOURCE 创建</span></div>';
   $('#res-body').innerHTML=rs.map(r=>{const s=states[r.resource_id]||{};
     return `<tr class="row-click" data-res="${esc(r.resource_id)}">
@@ -571,7 +702,12 @@ async function renderResources(){
     <td>${esc(r.provider||'—')}</td><td>${esc(r.resource_type||'—')}</td><td>${esc(r.billing_mode||'—')}</td>
     <td class="num">${fmt.n(r.requests)}</td><td class="num">${fmt.n(r.total_tokens)}</td>
     <td class="num">${fmt.n(r.cache_read_tokens)}</td><td class="num">${fmt.n(r.error_count)}</td>
-    <td class="num">${fmt.ms(r.avg_latency_ms)}</td><td>${costBadge(r)}</td>
+    <td class="num">${fmt.ms(r.avg_latency_ms)}</td>
+    <td class="num">${r.requests>0?fmt.pct(r.error_count/r.requests):'—'}</td>
+    <td class="num">${r.requests>0?(r.total_tokens/r.requests).toFixed(1):'—'}</td>
+    <td class="num">${cost1kHTML(effMap[r.resource_id])}</td>
+    <td>${healthInd(r)}</td>
+    <td>${costBadge(r)}</td>
     <td>${usedBadge(r)}${r.enabled===false?' <span style="color:var(--yellow);font-size:10px">DISABLED</span>':''}</td>
     <td class="num">${num(s.balance)}</td><td class="num">${num(s.quota)}</td><td class="num">${num(s.remaining)}</td>
     <td>${obsBadge(s)}</td>
@@ -581,16 +717,19 @@ async function renderResources(){
       <span class="res-act" data-act="toggle" title="toggle">[${r.enabled===false?'ENABLE':'DISABLE'}]</span>
       <span class="res-act" data-act="del" title="DELETE" style="color:var(--red)">[DELETE]</span>
     </td>
-  </tr>`;}).join('')||'<tr><td colspan="16"><div class="empty">NO RESOURCES CONFIGURED</div></td></tr>';
+  </tr>`;}).join('')||'<tr><td colspan="21"><div class="empty">NO RESOURCES CONFIGURED</div></td></tr>';
+  $('#res-cur-note').textContent = multiCur ? '⚠ Multiple currencies ('+[...curSet].join('/')+') — cross-resource cost NOT COMPARABLE (no FX).' : '';
   const u=d.unattributed||{};
   $('#res-unatt').innerHTML=`<div class="panel">
     <div class="prov-row" style="grid-template-columns:120px 120px 1fr 1fr 1fr">
       <div style="color:var(--dim)">RESOURCE</div><div style="font-weight:700">UNATTRIBUTED</div>
       <div class="num">REQUESTS ${fmt.n(u.requests)}</div>
       <div class="num">TOKENS ${fmt.n(u.total_tokens)}</div>
-      <div class="num">COST ${u.cost_status==='none'?'—':(u.cost==null?'N/A':fmt.money(u.cost,u.cost_currency)+Number(u.cost).toFixed(4))}</div>
+      <div class="num">COST ${u.cost_status==='none'?'—':costAmount(u)}</div>
     </div>
-    <div class="hint2">These events have no resource attribution.</div>
+    <div class="hint2">These events have no resource attribution（resource_id = NULL）.
+      Monitor 绝不猜测归属 —— 如需归集，请在请求头带 X-Monitor-Resource，
+      或为 Provider 配置 default_resource_id。</div>
   </div>`;
   const ug=d.unregistered||[];
   const ustates={};(st.unregistered||[]).forEach(s=>ustates[s.resource_id]=s);
@@ -604,10 +743,12 @@ async function renderResources(){
       <div class="mono" style="cursor:pointer" data-unreg="${esc(x.resource_id)}" title="查看历史事件">${esc(x.resource_id)} ▸</div>
       <div style="color:var(--yellow)">UNREGISTERED</div>
       <div class="num">${fmt.n(x.requests)}</div><div class="num">${fmt.n(x.total_tokens)}</div>
-      <div class="num">${x.cost==null?'N/A':fmt.money(x.cost,x.cost_currency)+Number(x.cost).toFixed(4)}</div>
+      <div class="num">${costAmount(x)}</div>
       <div>${obsBadge(ustates[x.resource_id])}</div>
     </div>`).join('')}
-    <div class="hint2">Resource 已不在 Registry（被删除或从未注册），历史事件与历史 observation 保留且不被归为 unattributed。</div>
+    <div class="hint2">Resource 已不在 Registry（被删除或从未注册），历史事件与历史 observation
+      保留且不被归为 unattributed。这里出现的历史名称可能是验证/测试期间写入的
+      一次性 resource_id —— 它代表历史事实，不代表当前仍在使用的资源。</div>
   </div>`:'';
   $$('#res-cards .res-card').forEach(el=>el.onclick=()=>showResourceDetail(el.dataset.res));
   $$('#res-body tr[data-res]').forEach(el=>{
@@ -674,13 +815,16 @@ async function saveResourceForm(){
   renderResources();
 }
 async function showResourceDetail(id){
-  const [d, st]=await Promise.all([
+  const [d, st, hlth, ts]=await Promise.all([
     fetch(`/api/resources/${id}/usage`).then(r=>r.json()).catch(()=>({error:'network'})),
-    fetch(`/api/resources/${id}/state`).then(r=>r.json()).catch(()=>({error:'network'}))]);
+    fetch(`/api/resources/${id}/state`).then(r=>r.json()).catch(()=>({error:'network'})),
+    fetch(`/api/resources/${id}/health`).then(r=>r.json()).catch(()=>({})),
+    fetch(`/api/resources/${id}/timeseries?days=30`).then(r=>r.json()).catch(()=>({rows:[]}))]);
   if(d.error||!d.resource){
     $('#detail-body').innerHTML=`<div class="empty" style="margin:14px">RESOURCE NOT FOUND<br><span style="color:var(--dim);font-size:11px">${esc(d.error||st.error||'')}</span></div>`;
     $('#overlay').classList.add('show');return;
   }
+  if(!Object.keys(EFF).length){ try{ const e=await get('/efficiency/by_dim',{dim:'resource_id'}); (e.rows||[]).forEach(x=>{if(x.name)EFF[x.name]=x;}); }catch(_){} }
   const r=d.resource;
   const lastUsed=r.last_used_at?fmt.time(r.last_used_at):'N/A';
   const s=st&&st.observation_status?st:null;
@@ -714,10 +858,25 @@ async function showResourceDetail(id){
     <td class="num">${fmt.ms(x.latency_ms)}</td>
     <td><span class="badge ${x.status_code>=400?'err':'ok'}">${x.status_code}</span></td></tr>`).join('')
     ||'<tr><td colspan="8"><div class="empty">NO USAGE</div></td></tr>';
+  const hv=hlth&&hlth.health?hlth:null;
+  const hBadge=hv?({healthy:'<span class="badge ok">HEALTHY</span>',degraded:'<span class="badge" style="color:var(--yellow);border-color:#5a4a1d">DEGRADED</span>',unavailable:'<span class="badge err">UNAVAILABLE</span>',unknown:'<span class="badge" style="color:var(--dim)">UNKNOWN</span>'}[hv.health]||esc(hv.health)):'<span class="badge" style="color:var(--dim)">UNKNOWN</span>';
+  const healthSec=`<div class="sect-title" style="margin-top:12px">RESOURCE HEALTH <span style="color:var(--dim);font-weight:400;font-size:10px">authoritative · from /health</span></div>
+    <table>
+      <tr><td>VERDICT</td><td>${hBadge}</td></tr>
+      <tr><td>REQUESTS</td><td>${fmt.n(hv?hv.requests:r.requests)}</td></tr>
+      <tr><td>ERRORS</td><td>${fmt.n(hv?hv.errors:r.error_count)}</td></tr>
+      <tr><td>ERROR RATE</td><td>${hv&&hv.error_rate!=null?fmt.pct(hv.error_rate):'—'}</td></tr>
+    </table>`;
+  const trendSec=buildTrend(ts&&ts.rows?ts.rows:[]);
+  const comparisonSec=buildComparison(id, hBadge);
   $('#detail-body').innerHTML=`
     <div class="sect-title">RESOURCE STATE</div>
     <table>${obsRows.map(([k,v])=>`<tr><td>${k}</td><td>${v}</td></tr>`).join('')}</table>
+    <div class="sect-title" style="margin-top:12px">RESOURCE USAGE (HISTORICAL) <span style="color:var(--dim);font-weight:400;font-size:10px">all recorded events for this resource · distinct from Recent Requests</span></div>
     <table>${rows.map(([k,v])=>`<tr><td>${k}</td><td>${v}</td></tr>`).join('')}</table>
+    ${healthSec}
+    ${trendSec}
+    ${comparisonSec}
     <div class="sect-title" style="margin-top:12px">MODEL USAGE</div>
     <div style="overflow-x:auto"><table><thead><tr><th>Model</th><th class="num">Requests</th><th class="num">Tokens</th><th class="num">Cache</th><th class="num">Errors</th><th class="num">Latency</th><th>Cost</th></tr></thead><tbody>${models}</tbody></table></div>
     <div class="sect-title" style="margin-top:12px">RECENT REQUESTS</div>
@@ -766,6 +925,7 @@ $('#ranges').addEventListener('click',e=>{
 $('#f-provider').onchange=e=>reqState.provider=e.target.value;
 $('#f-source').onchange=e=>reqState.source=e.target.value;
 $('#f-project').onchange=e=>reqState.project=e.target.value;
+$('#f-client').onchange=e=>reqState.client=e.target.value;
 $('#f-status').onchange=e=>reqState.status=e.target.value;
 $('#f-provider').onchange=async e=>{
   reqState.provider=e.target.value;
@@ -774,8 +934,8 @@ $('#f-provider').onchange=async e=>{
   $('#f-model').innerHTML='<option value="">ALL</option>'+models.map(m=>`<option>${esc(m)}</option>`).join('');
 };
 $('#f-apply').onclick=()=>{reqState.page=1;renderRequests()};
-$('#f-reset').onclick=()=>{Object.assign(reqState,{page:1,provider:'',model:'',source:'',project:'',status:''});
-  $('#f-provider').value=$('#f-model').value=$('#f-source').value=$('#f-project').value=$('#f-status').value='';renderRequests()};
+$('#f-reset').onclick=()=>{Object.assign(reqState,{page:1,provider:'',model:'',source:'',project:'',client:'',status:''});
+  $('#f-provider').value=$('#f-model').value=$('#f-source').value=$('#f-project').value=$('#f-client').value=$('#f-status').value='';renderRequests()};
 /* 启动 */
 (async()=>{await loadFilters();route()})();
 /* 轮询刷新：每 45s 重新渲染当前页（不引入 WebSocket/SSE；标签页隐藏时跳过） */
