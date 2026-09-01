@@ -36,11 +36,46 @@ def _old_schema_conn(db_path):
     conn.close()
 
 
-def test_legacy_db_gets_cache_columns_on_open(tmp_path):
-    """旧库由 EventStore 打开时自动补列，历史行 cache 为 NULL。"""
+def test_open_does_not_alter_schema(tmp_path):
+    """P6 审计修复的核心不变量：**构造 EventStore 绝不 ALTER 既有库**。
+
+    否则「import 一次 monitor.main」或任何只读审计都会改写生产库 schema。
+    迁移必须由显式动作（store.migrate() / 应用启动）或首次写入触发。
+    """
+    db = tmp_path / "old.db"
+    _old_schema_conn(db)
+    before = sqlite3.connect(db).execute("PRAGMA table_info(events)").fetchall()
+    store = EventStore(db)
+    after = sqlite3.connect(db).execute("PRAGMA table_info(events)").fetchall()
+    assert before == after, "构造 EventStore 不应改动 schema"
+    # 显式迁移才补列
+    added = store.migrate()
+    assert "cache_read_tokens" in added
+    cols = {r[1] for r in sqlite3.connect(db).execute(
+        "PRAGMA table_info(events)")}
+    assert {"cache_read_tokens", "cache_write_tokens", "cache_hit"} <= cols
+    store.close()
+
+
+def test_open_then_insert_migrates(tmp_path):
+    """安全网：首次写入自动补齐列，避免调用方忘记 migrate 而丢数据。"""
     db = tmp_path / "old.db"
     _old_schema_conn(db)
     store = EventStore(db)
+    store.insert(AIRequestEvent(provider="deepseek", model="deepseek-chat",
+                                input_tokens=1, output_tokens=1))
+    cols = {r[1] for r in sqlite3.connect(db).execute(
+        "PRAGMA table_info(events)")}
+    assert "cache_read_tokens" in cols and "client" in cols
+    store.close()
+
+
+def test_legacy_db_gets_cache_columns_on_migrate(tmp_path):
+    """旧库由 EventStore.migrate() 补列，历史行 cache 为 NULL。"""
+    db = tmp_path / "old.db"
+    _old_schema_conn(db)
+    store = EventStore(db)
+    store.migrate()
     cols = {r[1] for r in sqlite3.connect(db).execute(
         "PRAGMA table_info(events)")}
     assert {"cache_read_tokens", "cache_write_tokens", "cache_hit"} <= cols
@@ -105,6 +140,7 @@ def test_legacy_db_renames_parent_span_id(tmp_path):
     db = tmp_path / "old.db"
     _old_schema_conn(db)   # 旧 schema 含 parent_span_id
     store = EventStore(db)
+    store.migrate()
     cols = {r[1] for r in sqlite3.connect(db).execute("PRAGMA table_info(events)")}
     assert "parent_id" in cols and "parent_span_id" not in cols
     store.close()
@@ -139,7 +175,8 @@ def test_default_collector_event_type_on_legacy_data(tmp_path):
     """旧事件行（无 collector/event_type）查询时回退默认值。"""
     db = tmp_path / "old.db"
     _old_schema_conn(db)
-    store = EventStore(db)   # 自动补列 DEFAULT
+    store = EventStore(db)
+    store.migrate()          # 显式补列 DEFAULT
     row = store.recent_events(1)[0]
     # ADD COLUMN ... DEFAULT 使旧行也有值
     assert row["collector"] == "gateway"

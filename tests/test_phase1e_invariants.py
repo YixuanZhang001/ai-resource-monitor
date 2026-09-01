@@ -266,9 +266,11 @@ def test_migration_idempotent(tmp_path):
     db = tmp_path / "old.db"
     _old_schema_conn(db)
     store = EventStore(db)
+    store.migrate()
     store.close()
-    # 二次打开不报错、不丢数据
+    # 二次打开 + 迁移不报错、不丢数据
     store2 = EventStore(db)
+    store2.migrate()
     assert store2.recent_events(1)[0]["request_id"] == "legacy-1"
     store2.close()
 
@@ -281,7 +283,7 @@ def test_legacy_estimated_cost_renamed(tmp_path):
     cols_before = {r[1] for r in conn.execute("PRAGMA table_info(events)")}
     assert "estimated_cost" in cols_before
     conn.close()
-    EventStore(db)  # 打开即迁移
+    EventStore(db).migrate()  # 显式迁移（构造期不再隐式 ALTER）
     conn = sqlite3.connect(db)
     cols_after = {r[1] for r in conn.execute("PRAGMA table_info(events)")}
     assert "cost" in cols_after and "estimated_cost" not in cols_after
