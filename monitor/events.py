@@ -46,6 +46,11 @@ class AIRequestEvent:
 
     source: Optional[str] = None        # 调用来源（客户端自定义 header）
     project: Optional[str] = None       # 归属项目
+    # Client：发起调用的 Agent / SDK / 工具（Codex / WorkBuddy / openai-sdk / curl …）。
+    # 与 project（业务项目）、resource_id（资源）严格区分，三者不是同一概念。
+    # 来源优先级：X-Monitor-Client 显式头 > 已知 User-Agent 推导 > 未归因（保持 NULL）。
+    # 绝不由 provider / 模型 / API Key 猜测 client。
+    client: Optional[str] = None
 
     input_tokens: Optional[int] = None
     output_tokens: Optional[int] = None

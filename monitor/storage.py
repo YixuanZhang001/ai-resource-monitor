@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 import threading
 import time
@@ -20,6 +21,7 @@ CREATE TABLE IF NOT EXISTS events (
     endpoint TEXT,
     source TEXT,
     project TEXT,
+    client TEXT,
     input_tokens INTEGER,
     output_tokens INTEGER,
     total_tokens INTEGER,
@@ -68,7 +70,7 @@ CREATE INDEX IF NOT EXISTS idx_states_res_ts
 
 COLUMNS = [
     "request_id", "timestamp", "provider", "model", "endpoint", "source",
-    "project", "input_tokens", "output_tokens", "total_tokens",
+    "project", "client", "input_tokens", "output_tokens", "total_tokens",
     "reasoning_tokens", "cache_read_tokens", "cache_write_tokens", "cache_hit",
     "latency_ms", "status_code", "cost", "currency", "billing_status",
     "list_cost", "pricing_snapshot_id", "error", "trace_id",
@@ -81,6 +83,7 @@ COLUMN_MIGRATIONS = [
     ("cache_read_tokens", "INTEGER"),
     ("cache_write_tokens", "INTEGER"),
     ("cache_hit", "INTEGER"),
+    ("client", "TEXT"),
     ("collector", "TEXT DEFAULT 'gateway'"),
     ("event_type", "TEXT DEFAULT 'llm_call'"),
     ("execution_id", "TEXT"),
@@ -116,7 +119,16 @@ def ensure_columns(conn: sqlite3.Connection) -> list[str]:
 
 
 class EventStore:
-    def __init__(self, db_path: str | Path):
+    """SQLite 事件存储。
+
+    安全约束（P6 审计修复）：**构造期绝不执行 ALTER TABLE 迁移**。
+    SCHEMA 全部为 CREATE TABLE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS，
+    对既有库是 no-op（已实证：生产库 SHA 不变）；而增量列迁移会改写 schema，
+    必须由显式动作触发（应用启动 lifespan / 首次写入），不能由「import 一次
+    monitor.main」隐式执行 —— 否则只读审计也会污染生产库。
+    """
+
+    def __init__(self, db_path: str | Path, auto_migrate: bool = False):
         self.db_path = str(db_path)
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
@@ -124,10 +136,25 @@ class EventStore:
         self._conn.row_factory = sqlite3.Row
         with self._lock, self._conn:
             self._conn.executescript(SCHEMA)
-            ensure_columns(self._conn)
             self._conn.commit()
+        self._migrated = False
+        if auto_migrate:
+            self.migrate()
+
+    def migrate(self) -> list[str]:
+        """显式增量列迁移（幂等）。返回本次新增/重命名的列。
+
+        调用点：应用启动（lifespan）、首次写入（安全网）。
+        """
+        with self._lock, self._conn:
+            added = ensure_columns(self._conn)
+            self._conn.commit()
+        self._migrated = True
+        return added
 
     def insert(self, event: AIRequestEvent) -> None:
+        if not self._migrated:
+            self.migrate()
         d = event.to_dict()
         values = [d.get(c) for c in COLUMNS]
         sql = f"INSERT INTO events ({', '.join(COLUMNS)}) VALUES ({', '.join('?' * len(COLUMNS))})"
@@ -294,6 +321,8 @@ class EventStore:
         "model": "model",
         "source": "COALESCE(source, 'Unknown')",
         "project": "COALESCE(project, 'Unknown')",
+        "client": "COALESCE(client, 'Unknown')",
+        "resource_id": "COALESCE(resource_id, '')",
     }
 
     @classmethod
@@ -310,9 +339,22 @@ class EventStore:
 
     def analytics_overview(self, since: Optional[float] = None) -> dict:
         where, params = self._since(since)
+        # 历史用量聚合（additive 字段；NULL token/cost 不参与 SUM，SUM 为 0 但
+        # 不表示「无未知」——cost 仍走 cost_by_currency，未知成本绝不显示为 0）。
         row = self._query(
             f"""SELECT COUNT(*) AS requests,
                        COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                       COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                       COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                       COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+                       SUM(CASE WHEN cache_hit IS NOT NULL THEN 1 ELSE 0 END) AS cache_observable,
+                       SUM(CASE WHEN cache_hit = 1 THEN 1 ELSE 0 END) AS cache_hit_count,
+                       -- 仅统计「可观测 cache」请求的 input_tokens：
+                       -- cache_read_tokens ⊆ input_tokens，分母必须与分子同口径，
+                       -- 否则 ratio 会被未上报 cache 字段的请求系统性稀释。
+                       COALESCE(SUM(CASE WHEN cache_hit IS NOT NULL
+                                         THEN input_tokens ELSE 0 END), 0)
+                           AS cache_observable_input_tokens,
                        COALESCE(AVG(latency_ms), 0) AS avg_latency_ms,
                        SUM(CASE WHEN error IS NOT NULL OR status_code >= 400
                                 THEN 1 ELSE 0 END) AS errors
@@ -330,6 +372,21 @@ class EventStore:
                                    for c in costs if c["currency"]}
         row["error_rate"] = (row["errors"] / row["requests"]) \
             if row["requests"] else 0.0
+        # 缓存指标（绝不伪造；口径必须自洽）：
+        #   cache_coverage   = 可观测请求数 / 总请求数   ← 「这些数字覆盖了多少请求」
+        #   cache_hit_rate   = 命中请求数 / 可观测请求数（请求级）
+        #   cache_read_ratio = cache 命中 token / 可观测请求的 input token（token 级）
+        # 修因（P6 审计）：旧实现分母用「全部请求的 input_tokens」，分子只来自
+        # 上报了 cache 字段的请求，导致 ratio 被系统性低估。现分母与分子同口径。
+        requests = row.get("requests") or 0
+        cache_obs = row.get("cache_observable") or 0
+        cache_hit = row.get("cache_hit_count") or 0
+        obs_in_t = row.get("cache_observable_input_tokens") or 0
+        cr = row.get("cache_read_tokens")
+        row["cache_coverage"] = (cache_obs / requests) if requests else None
+        row["cache_hit_rate"] = (cache_hit / cache_obs) if cache_obs else None
+        row["cache_read_ratio"] = (cr / obs_in_t) if (cr and obs_in_t) else None
+        row["cache_data_feasible"] = bool(cache_obs)
         return row
 
     def analytics_cost(self, dim: str, since: Optional[float] = None) -> list[dict]:
@@ -373,6 +430,75 @@ class EventStore:
                GROUP BY day ORDER BY day""",
             (since,),
         )
+
+    def resource_timeseries(self, resource_id: Optional[str] = None,
+                            days: int = 30) -> list[dict]:
+        """单 Resource（或 NULL 未归因桶）每日时间序列。
+
+        铁律（Phase 4 Step 1 范围）：
+        - 仅聚合 events，不新增表、不改 schema、不回填历史。
+        - 仅统计 event_type='llm_call'（与全局 timeseries 一致）。
+        - resource_id 严格等于给定值；resource_id IS NULL 的事件绝不混入
+          （不猜测资源）。NULL 桶由 resource_id=None 显式查询，保持独立。
+        - cost 仅在 cost IS NOT NULL 时计入；按 currency 分别聚合，
+          绝不跨货币求和（多货币分别计价）。
+        - days 滑动窗口：since = now - days*86400，含窗口起始日（timestamp >= since）。
+        """
+        if days is None or days <= 0:
+            days = 30
+        since = time.time() - days * 86400
+        where, _ = self._since(since)  # " WHERE timestamp >= ? AND event_type='llm_call'"
+        if resource_id is None:
+            rid_cond = " AND resource_id IS NULL"
+            rid_params: tuple = ()
+        else:
+            rid_cond = " AND resource_id = ?"
+            rid_params = (resource_id,)
+        params = (since,) + rid_params
+        rows = self._query(
+            f"""SELECT date(timestamp, 'unixepoch', 'localtime') AS day,
+                       COUNT(*) AS requests,
+                       COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                       COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                       COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                       SUM(CASE WHEN error IS NOT NULL OR status_code >= 400
+                                THEN 1 ELSE 0 END) AS errors,
+                       COALESCE(AVG(latency_ms), 0) AS avg_latency_ms
+                FROM events{where}{rid_cond}
+                GROUP BY day ORDER BY day""",
+            params)
+        # cost 仅 cost IS NOT NULL 的事件，按 (day, currency) 分别聚合
+        cost_rows = self._query(
+            f"""SELECT date(timestamp, 'unixepoch', 'localtime') AS day,
+                       currency,
+                       ROUND(SUM(cost), 6) AS cost
+                FROM events{where}{rid_cond} AND cost IS NOT NULL
+                GROUP BY day, currency""",
+            params)
+        cost_by_day: dict = {}
+        for c in cost_rows:
+            if c["currency"]:
+                cost_by_day.setdefault(c["day"], {})[c["currency"]] = c["cost"]
+        out = []
+        for r in rows:
+            day = r["day"]
+            cbc = cost_by_day.get(day)  # dict|None
+            # 便利标量 cost：仅当该日恰好单一货币时给出；多货币/无 cost -> None（不求和）
+            cost = (next(iter(cbc.values())) if len(cbc) == 1 else None) \
+                if cbc else None
+            out.append({
+                "day": day,
+                "requests": r["requests"],
+                "input_tokens": r["input_tokens"],
+                "output_tokens": r["output_tokens"],
+                "total_tokens": r["total_tokens"],
+                "errors": r["errors"],
+                "avg_latency_ms": round(r["avg_latency_ms"], 1)
+                                  if r["avg_latency_ms"] is not None else None,
+                "cost_by_currency": cbc,
+                "cost": cost,
+            })
+        return out
 
     def analytics_performance(self, since: Optional[float] = None) -> dict:
         """avg/p50/p95/error_rate/request_count；数据不足时百分位返回 None（不伪造）。"""
@@ -427,6 +553,7 @@ class EventStore:
                        model: Optional[str] = None,
                        source: Optional[str] = None,
                        project: Optional[str] = None,
+                       client: Optional[str] = None,
                        status: Optional[int] = None,
                        since: Optional[float] = None) -> dict:
         page = max(1, page)
@@ -436,8 +563,16 @@ class EventStore:
             conds.append("timestamp >= ?")
             params.append(since)
         for col, val in (("provider", provider), ("model", model),
-                         ("source", source), ("project", project)):
-            if val:
+                         ("source", source), ("project", project),
+                         ("client", client)):
+            if not val:
+                continue
+            # 保留字 __NULL__ 表示「未归因」：client 在 DB 中为 NULL，
+            # 而展示层用 COALESCE(client,'Unknown') 呈现；筛选器据此精确命中 NULL，
+            # 而非误匹配字面量 "Unknown"（避免 Unknown 与真实同名值混淆）。
+            if col == "client" and val == "__NULL__":
+                conds.append("client IS NULL")
+            else:
                 conds.append(f"{col} = ?")
                 params.append(val)
         if status is not None:
@@ -451,6 +586,7 @@ class EventStore:
                        COALESCE(model, '?') AS model,
                        COALESCE(source, 'Unknown') AS source,
                        COALESCE(project, 'Unknown') AS project,
+                       COALESCE(client, 'Unknown') AS client,
                        input_tokens, output_tokens, total_tokens,
                        latency_ms, status_code, cost, currency, error
                 FROM events{where}
@@ -465,9 +601,10 @@ class EventStore:
             """SELECT request_id, timestamp, provider, model, endpoint,
                       COALESCE(source, 'Unknown') AS source,
                       COALESCE(project, 'Unknown') AS project,
+                      COALESCE(client, 'Unknown') AS client,
                       input_tokens, output_tokens, total_tokens,
                       latency_ms, status_code, cost, currency,
-                      error, trace_id, parent_id
+                      error, trace_id, parent_id, metadata
                FROM events WHERE request_id = ? LIMIT 1""",
             (request_id,))
         return rows[0] if rows else None
@@ -482,8 +619,15 @@ class EventStore:
     # resource_id=''（COALESCE）代表 unattributed（NULL），不伪造资源
 
     def resource_usage_by_resource(self, since: Optional[float] = None) -> list[dict]:
+        """按 resource 聚合 Usage。
+
+        修因（P6 审计）：旧实现用 COALESCE(SUM(cost),0) 把**不同币种金额直接相加**
+        （真实数据已发生：CNY 0.002086 + USD 0.000056 = 0.002142，且被标成 ¥）。
+        现同时给出 cost_by_currency，并把「单一币种」判定交给上层：
+        mixed_currency=True 时 cost 不可作为单一数字展示（不伪造汇率）。
+        """
         where, params = self._since(since)
-        return self._query(
+        rows = self._query(
             f"""SELECT COALESCE(resource_id, '') AS resource_id,
                        COUNT(*) AS requests,
                        COALESCE(SUM(input_tokens), 0) AS input_tokens,
@@ -501,6 +645,28 @@ class EventStore:
                 GROUP BY resource_id""",
             params,
         )
+        cost_where = f"{where} AND cost IS NOT NULL" if where \
+            else " WHERE cost IS NOT NULL"
+        costs = self._query(
+            f"""SELECT COALESCE(resource_id, '') AS resource_id, currency,
+                       COUNT(*) AS priced_requests,
+                       ROUND(SUM(cost), 6) AS cost
+                FROM events{cost_where}
+                GROUP BY resource_id, currency""",
+            params,
+        )
+        by: dict = {}
+        for c in costs:
+            # currency 为 NULL 的金额语义不明，不参与汇总展示
+            if not c["currency"]:
+                continue
+            by.setdefault(c["resource_id"], {})[c["currency"]] = c["cost"]
+        for r in rows:
+            m = by.get(r["resource_id"], {})
+            r["cost_by_currency"] = m
+            r["cost_currency"] = next(iter(m)) if len(m) == 1 else None
+            r["mixed_currency"] = len(m) > 1
+        return rows
 
     def model_usage_for_resource(self, resource_id: str,
                                  since: Optional[float] = None) -> list[dict]:
@@ -535,3 +701,308 @@ class EventStore:
                ORDER BY id DESC LIMIT ?""",
             (resource_id, limit))
         return rows
+
+    # ---------- Phase 3B：Efficiency Derivation Layer ----------
+    # 纯 SQL 聚合原始值 + Python 计算比率/覆盖度（分母语义严格）。
+    # 不新增字段、不新增表、不改 events schema。
+    # 铁律：NULL cost != 0；NULL tokens 不参与比率；0 请求 -> 比率 NULL；
+    #       多货币分别计价；cache 仅在观测到语义时计算；balance_delta 绝不叫 burn rate。
+
+    @staticmethod
+    def _r(v, n: int = 6):
+        """None 透传；否则四舍五入（避免浮点噪声）。"""
+        return None if v is None else round(v, n)
+
+    def _efficiency_raw(self, expr: str, since: Optional[float]):
+        """返回 (base_rows, cost_rows, latency_rows)。
+        base_rows: 每 group 的原始计数/求和（含 NULL 透传）。
+        cost_rows: 每 group 每 currency 的 priced_requests / known_cost / priced_total_tokens。
+        latency_rows: 每 group 的 p50/p95（Python 分位数，无 SQLite 数学函数依赖）。"""
+        where, params = self._since(since)
+        base = self._query(
+            f"""SELECT {expr} AS name,
+                       COUNT(*) AS requests,
+                       SUM(CASE WHEN error IS NOT NULL OR status_code >= 400
+                                THEN 1 ELSE 0 END) AS errors,
+                       SUM(input_tokens) AS input_tokens,
+                       SUM(output_tokens) AS output_tokens,
+                       SUM(total_tokens) AS total_tokens,
+                       SUM(CASE WHEN total_tokens IS NOT NULL
+                                THEN 1 ELSE 0 END) AS tokened_requests,
+                       SUM(cache_read_tokens) AS cache_read_tokens,
+                       SUM(cache_write_tokens) AS cache_write_tokens,
+                       SUM(CASE WHEN cache_hit IS NOT NULL
+                                THEN 1 ELSE 0 END) AS cache_observable,
+                       SUM(CASE WHEN cache_hit = 1
+                                THEN 1 ELSE 0 END) AS cache_hit_count,
+                       -- 与 cache_read_tokens 同口径的分母（仅可观测请求）
+                       SUM(CASE WHEN cache_hit IS NOT NULL
+                                THEN input_tokens ELSE 0 END)
+                           AS cache_observable_input_tokens,
+                       AVG(latency_ms) AS avg_latency_ms
+                FROM events{where}
+                GROUP BY {expr}""",
+            params,
+        )
+        cost = self._query(
+            f"""SELECT {expr} AS name, currency,
+                       COUNT(*) AS priced_requests,
+                       ROUND(SUM(cost), 6) AS known_cost,
+                       SUM(total_tokens) AS priced_total_tokens
+                FROM events{where} AND cost IS NOT NULL
+                GROUP BY {expr}, currency""",
+            params,
+        )
+        # 延迟分位数：拉取 (group, latency) 后在 Python 计算（nearest-rank），
+        # 避免依赖 SQLite 可选的数学函数（ceil 等在某些构建缺失）。
+        lat_raw = self._query(
+            f"SELECT {expr} AS name, latency_ms FROM events{where} "
+            f"AND latency_ms IS NOT NULL",
+            params,
+        )
+        from collections import defaultdict
+        lat_by_group: dict = defaultdict(list)
+        for r in lat_raw:
+            lat_by_group[r["name"]].append(r["latency_ms"])
+
+        def _pct(vals, q):
+            if not vals:
+                return None
+            s = sorted(vals)
+            idx = max(0, math.ceil(len(s) * q) - 1)
+            return round(s[idx], 1)
+
+        latency = [
+            {"name": g,
+             "p50_latency_ms": _pct(v, 0.5),
+             "p95_latency_ms": _pct(v, 0.95)}
+            for g, v in lat_by_group.items()
+        ]
+        return base, cost, latency
+
+    @staticmethod
+    def _merge_efficiency(base_rows, cost_rows, latency_rows, dim: str) -> list[dict]:
+        cost_by_name: dict = {}
+        for r in cost_rows:
+            cost_by_name.setdefault(r["name"], []).append(r)
+        lat_by_name = {r["name"]: r for r in latency_rows}
+        out = []
+        for b in base_rows:
+            name = b["name"]
+            requests = b["requests"] or 0
+            errors = b["errors"] or 0
+            input_t = b["input_tokens"]
+            output_t = b["output_tokens"]
+            total_t = b["total_tokens"]
+            tokened = b["tokened_requests"] or 0
+            cache_obs = b["cache_observable"] or 0
+            cache_hit = b["cache_hit_count"] or 0
+            cr = b["cache_read_tokens"]
+            cw = b["cache_write_tokens"]
+
+            tokens_per_request = (total_t / tokened) \
+                if (total_t is not None and tokened) else None
+            input_output_ratio = (input_t / output_t) \
+                if (input_t and output_t) else None
+            output_share = (output_t / total_t) \
+                if (output_t and total_t) else None
+            token_coverage = (tokened / requests) if requests else None
+
+            cache_hit_rate = (cache_hit / cache_obs) if cache_obs else None
+            # token 级缓存复用占比：cache_read_tokens / 可观测请求的 input_tokens。
+            # 约定（OpenAI 兼容）：cache_read_tokens ⊆ input_tokens（cached 为 input 子集）。
+            # 该关系无法从 schema 单独验证，故仅在 cache_observable>0 时给出，
+            # 并随 cache_data_feasible 标记；切勿等同于请求级 cache_hit_rate。
+            # 修因（P6 审计）：旧分母为「全部请求 input_tokens」，与分子口径不一致，
+            # 会被未上报 cache 字段的请求系统性稀释。
+            obs_input_t = b.get("cache_observable_input_tokens") or 0
+            cache_read_ratio = (cr / obs_input_t) if (cr and obs_input_t) else None
+            cache_coverage = (cache_obs / requests) if requests else None
+
+            cost_block: dict = {}
+            for c in cost_by_name.get(name, []):
+                cur = c["currency"]
+                priced = c["priced_requests"] or 0
+                known = c["known_cost"]
+                ptok = c["priced_total_tokens"]
+                cov = (priced / requests) if requests else None
+                cpr = (known / priced) if (known is not None and priced) \
+                    else None
+                cp1k = (known / (ptok / 1000.0)) \
+                    if (known is not None and ptok) else None
+                cost_block[cur] = {
+                    "known_cost": known,
+                    "priced_requests": priced,
+                    "cost_coverage": EventStore._r(cov, 4),
+                    "cost_per_request": EventStore._r(cpr),
+                    "cost_per_1k_tokens": EventStore._r(cp1k),
+                }
+
+            lat = lat_by_name.get(name, {}) or {}
+            row = {
+                # resource_id 维度下 '' 代表 unattributed（合法状态，不伪造资源）
+                "name": (None if (dim == "resource_id" and name == "")
+                         else name),
+                "requests": requests,
+                "errors": errors,
+                "error_rate": (EventStore._r(errors / requests, 4)
+                               if requests else None),
+                "tokens": {
+                    "input": input_t, "output": output_t, "total": total_t,
+                    "tokened_requests": tokened,
+                    "tokens_per_request": EventStore._r(tokens_per_request),
+                    "input_output_ratio": EventStore._r(input_output_ratio, 3),
+                    "output_share": EventStore._r(output_share, 4),
+                    "token_coverage": EventStore._r(token_coverage, 4),
+                },
+                "cost_by_currency": cost_block,
+                "cache": {
+                    "cache_read_tokens": cr,
+                    "cache_write_tokens": cw,
+                    "cache_observable_requests": cache_obs,
+                    "cache_hit_requests": cache_hit,
+                    "cache_hit_rate": EventStore._r(cache_hit_rate, 4),
+                    "cache_read_ratio": EventStore._r(cache_read_ratio, 4),
+                    "cache_coverage": EventStore._r(cache_coverage, 4),
+                    "cache_data_feasible": cache_obs > 0,
+                },
+                "latency": {
+                    "avg_latency_ms": (EventStore._r(b["avg_latency_ms"], 1)
+                                       if b["avg_latency_ms"] is not None
+                                       else None),
+                    "p50_latency_ms": lat.get("p50_latency_ms"),
+                    "p95_latency_ms": lat.get("p95_latency_ms"),
+                },
+            }
+            out.append(row)
+        out.sort(key=lambda r: r["requests"], reverse=True)
+        return out
+
+    def efficiency_by_dim(self, dim: str,
+                         since: Optional[float] = None) -> list[dict]:
+        if dim not in EventStore.DIM_COLUMNS:
+            raise ValueError(f"unsupported dimension: {dim}")
+        expr = EventStore.DIM_COLUMNS[dim]
+        base, cost, latency = self._efficiency_raw(expr, since)
+        return self._merge_efficiency(base, cost, latency, dim)
+
+    def efficiency_overview(self, since: Optional[float] = None) -> dict:
+        """全局效率概览（单一聚合组）。返回 dict（无 name 字段）。
+
+        无事件时返回全 None/0 的空结构，绝不伪造数据（请求数 0 -> 所有比率为 None）。"""
+        base, cost, latency = self._efficiency_raw("'__ALL__'", since)
+        if not base:
+            return {
+                "requests": 0, "errors": 0, "error_rate": None,
+                "tokens": {"input": None, "output": None, "total": None,
+                           "tokened_requests": 0, "tokens_per_request": None,
+                           "input_output_ratio": None, "output_share": None,
+                           "token_coverage": None},
+                "cost_by_currency": {},
+                "cache": {"cache_read_tokens": None, "cache_write_tokens": None,
+                          "cache_observable_requests": 0, "cache_hit_requests": 0,
+                          "cache_hit_rate": None, "cache_read_ratio": None,
+                          "cache_coverage": None, "cache_data_feasible": False},
+                "latency": {"avg_latency_ms": None, "p50_latency_ms": None,
+                            "p95_latency_ms": None},
+            }
+        rows = self._merge_efficiency(base, cost, latency, "overview")
+        g = rows[0]
+        g.pop("name", None)
+        return g
+
+    def balance_trend(self, resource_id: str,
+                      limit: int = 20) -> dict:
+        """余额观测趋势。返回每期 balance 与相邻已知余额差（balance_delta）。
+
+        铁律：绝不命名为 burn rate / API 消费速度。余额变化可能来自充值/赠送/
+        外部消费等，observed_balance_change 仅为观测差值，不代表 API 消耗。"""
+        rows = self.observations_for(resource_id, limit)  # DESC
+        asc = list(reversed(rows))
+        out = []
+        prev_bal = None
+        for r in asc:
+            bal = r.get("balance")
+            delta = None
+            if bal is not None and prev_bal is not None:
+                delta = round(bal - prev_bal, 6)
+            out.append({
+                "observed_at": r.get("observed_at"),
+                "status": r.get("status"),
+                "balance": bal,
+                "balance_delta": delta,  # 相邻两期已知余额之差；缺失其一则 None
+            })
+            if bal is not None:
+                prev_bal = bal
+        out.reverse()
+        known = [(p["observed_at"], p["balance"])
+                 for p in out if p["balance"] is not None]
+        # 按时间升序取首/末，确保 observed_balance_change = 末 - 首（真实时间方向）
+        known_asc = sorted(known, key=lambda x: x[0])
+        summary = {
+            "resource_id": resource_id,
+            "observations": len(out),
+            "known_balance_points": len(known),
+            "first_balance": known_asc[0][1] if known_asc else None,
+            "last_balance": known_asc[-1][1] if known_asc else None,
+            "observed_balance_change": (known_asc[-1][1] - known_asc[0][1])
+                if len(known_asc) >= 2 else None,
+            "observed_balance_change_rate_per_hour": None,
+            "note": ("observed_balance_change 仅为观测余额差值，不等同于 API 消费速度；"
+                     "余额变化可能来自充值/赠送/外部消费等，不得命名为 burn rate"),
+        }
+        if len(known_asc) >= 2:
+            dt_h = (known_asc[-1][0] - known_asc[0][0]) / 3600.0
+            if dt_h > 0:
+                summary["observed_balance_change_rate_per_hour"] = \
+                    round((known_asc[-1][1] - known_asc[0][1]) / dt_h, 6)
+        return {"points": out, "summary": summary}
+
+    def resource_health(self, resource_id: str,
+                        since: Optional[float] = None) -> dict:
+        """Resource 级最小 Health 派生（基于真实请求 status/error，非探测）。
+
+        语义（绝不猜测）：
+        - unknown：该 resource 无任何 llm_call 事件 -> 不可判定健康，返回 unknown
+          （无数据 ≠ healthy）
+        - healthy：有事件且零失败
+        - degraded：有事件且部分失败
+        - unavailable：有事件且全部失败
+        error_rate 在 n=0 时为 None（不伪造成 0）。
+        last_observed_at：该 resource 最近一条 llm_call 的时间戳（epoch 秒），
+          none_observation 语义下为 None（从未观察）。用于判断 Health 新鲜度，
+          绝不假装成实时探测。
+        仅用既有 events 字段（status_code/error/event_type/resource_id/timestamp），
+        无新增 schema、无新增采集、不改 Ledger 语义。
+        """
+        where = "WHERE resource_id = ? AND event_type = 'llm_call'"
+        params: list = [resource_id]
+        if since is not None:
+            where += " AND timestamp >= ?"
+            params.append(since)
+        rows = self._query(
+            f"SELECT COUNT(*) AS n, "
+            f"SUM(CASE WHEN status_code >= 400 OR error IS NOT NULL THEN 1 ELSE 0 END) "
+            f"AS errs, MAX(timestamp) AS last_observed_at FROM events {where}",
+            tuple(params))
+        row = rows[0]
+        n = row["n"] or 0
+        errs = row["errs"] or 0
+        last_observed_at = row["last_observed_at"]
+        if n == 0:
+            return {"resource_id": resource_id, "health": "unknown",
+                    "requests": 0, "errors": 0, "error_rate": None,
+                    "last_observed_at": None,
+                    "note": "no attributed llm_call events -> unknown (not healthy)"}
+        rate = (errs / n) if n else None
+        if errs == 0:
+            health = "healthy"
+        elif errs >= n:
+            health = "unavailable"
+        else:
+            health = "degraded"
+        return {"resource_id": resource_id, "health": health,
+                "requests": n, "errors": errs,
+                "error_rate": round(rate, 4) if rate is not None else None,
+                "last_observed_at": last_observed_at,
+                "note": "derived from request status/error; not a probe"}

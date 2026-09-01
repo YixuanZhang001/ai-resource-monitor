@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from .config import ConfigManager
 from .core import MonitorCore
 from .events import AIRequestEvent
+from .providers import OpenAICompatibleAdapter
 from .registry import ProviderRegistry
 from .resource import ResourceRegistry
 from .sanitize import sanitize_error, sanitize_json_text
@@ -48,19 +49,144 @@ def init(r: ProviderRegistry, c: ConfigManager, mc: MonitorCore,
     streams = subs if subs is not None else SubscriberManager()
 
 
+def _classify_user_agent(ua: str) -> Optional[str]:
+    """从 User-Agent 推导已知 Agent 身份（UA-derived client）。
+
+    仅对明确可识别的 Agent/SDK 返回稳定 token；未知 UA 返回 None
+    （绝不猜测 client）。这是 UA 推导，client_attribution_source=user_agent。
+    """
+    u = (ua or "").lower()
+    if "codex" in u:
+        return "codex"
+    if "workbuddy" in u:
+        return "workbuddy"
+    if "openai-python" in u or "openai sdk" in u or "openai/" in u:
+        return "openai-sdk"
+    if "anthropic" in u or "claude" in u:
+        return "anthropic-sdk"
+    if u.startswith("curl/"):
+        return "curl"
+    if "postmanruntime" in u:
+        return "postman"
+    if "python-requests" in u:
+        return "python-requests"
+    if "python-httpx" in u or "httpx" in u:
+        return "httpx"
+    if "go-http-client" in u:
+        return "go-client"
+    if "node" in u or "axios" in u or "undici" in u:
+        return "node-client"
+    return None
+
+
+def _resolve_project_attribution(provider: str, headers, cfg) -> tuple:
+    """Project 归因（绝不猜）。
+
+    0. X-Monitor-Project 显式头 → project_attribution_source=explicit_header
+    1. provider 级 default_project（用户显式声明）→ configured_default
+    2. 否则未归因（project=None）→ unattributed
+    """
+    explicit = headers.get("x-monitor-project")
+    if explicit:
+        return explicit, "explicit_header"
+    if cfg is not None:
+        dp = getattr(cfg, "default_project", "") or ""
+        if dp:
+            return dp, "configured_default"
+    return None, "unattributed"
+
+
+def _resolve_client_attribution(headers) -> tuple:
+    """Client（发起调用的 Agent/SDK）归因（绝不猜）。
+
+    0. X-Monitor-Client 显式头 → explicit_header
+    1. 已知 User-Agent 推导（UA-derived）→ user_agent
+    2. 否则未归因（client=None）→ unattributed
+    注意：provider / 模型 / API Key / project 都绝不用于推导 client。
+    """
+    explicit = headers.get("x-monitor-client")
+    if explicit:
+        return explicit, "explicit_header"
+    ua = headers.get("user-agent")
+    if ua:
+        token = _classify_user_agent(ua)
+        if token:
+            return token, "user_agent"
+    return None, "unattributed"
+
+
 def _build_event(provider: str, path: str, request: Request,
-                 body: Optional[dict], adapter) -> AIRequestEvent:
+                 body: Optional[dict], adapter, cfg=None,
+                 resource_id: Optional[str] = None,
+                 attribution_source: str = "unattributed") -> AIRequestEvent:
     headers = request.headers
+    project, project_src = _resolve_project_attribution(provider, headers, cfg)
+    client, client_src = _resolve_client_attribution(headers)
     return AIRequestEvent(
         provider=provider,
         endpoint=f"/{path}",
         source=headers.get("x-monitor-source"),
-        project=headers.get("x-monitor-project"),
+        project=project,
+        client=client,
         trace_id=headers.get("x-trace-id"),
         parent_id=headers.get("x-parent-id") or headers.get("x-parent-span-id"),
-        resource_id=headers.get("x-monitor-resource"),   # 显式归因（可能为 None）
+        resource_id=resource_id,   # 由 _resolve_resource_id 解析后传入（已校验/回退）
         model=adapter.extract_model(path, body, None),
+        # 归因可解释性：保留每一笔事件"如何被归因"的来源（复用既有 metadata 字段，
+        # 不改 schema、不猜、不伪造）。resource / project / client 三者分别记录来源。
+        metadata={
+            "attribution_source": attribution_source,
+            "project_attribution_source": project_src,
+            "client_attribution_source": client_src,
+        },
     )
+
+
+def _resolve_resource_id(provider: str, resource_header,
+                         resources: ResourceRegistry,
+                         config_mgr=None):
+    """解析请求归属的 resource_id（经审计的最小规则，Frozen-Contract 安全）。
+
+    可解释归因层级（每一层都有明确来源，绝不猜 Provider→Resource）：
+    0. 显式 X-Monitor-Resource（非空）：权威来源，必须映射到已注册且 enabled 的
+       Resource，否则拒绝（400）。attribution_source=explicit_header。
+    1. provider 级 default_resource_id（用户在 config 中显式声明）：确定性映射，
+       attribution_source=provider_default。无声明则跳过本层。
+    2. 该 provider 恰好有【唯一】enabled Resource -> 确定性归因，
+       attribution_source=unique_resource。
+    3. 以上皆不满足 -> 未归因（resource_id=None），attribution_source=unattributed。
+       绝不随机/猜测/按 Provider 名硬匹配。
+    返回 (resource_id, error_response, attribution_source)：error_response 为 None
+    表示归因成功或有意保持未归因。绝不涉及 credential 映射、绝不改写 Ledger、
+    绝无新 DB 写入。
+    """
+    if resource_header:
+        rd = resources.get(resource_header)
+        if rd is None:
+            return (None,
+                    _error_response(provider, f"unknown resource: {resource_header}", 400),
+                    "rejected_unknown")
+        if not rd.enabled:
+            return (None,
+                    _error_response(provider, f"resource disabled: {resource_header}", 400),
+                    "rejected_disabled")
+        return resource_header, None, "explicit_header"
+    # 无显式 header -> 确定性、可解释的归因层级（绝不猜）
+    # 层级 1：provider 级显式 default_resource_id（用户声明，可解释来源）
+    if config_mgr is not None:
+        cfg = config_mgr.get(provider)
+        dr = getattr(cfg, "default_resource_id", "") if cfg else ""
+        if dr:
+            rd = resources.get(dr)
+            if rd is not None and rd.enabled:
+                return dr, None, "provider_default"
+    # 层级 2：该 provider 恰好有唯一 enabled Resource -> 确定性归因
+    enabled = [r for r in resources.list(enabled_only=True)
+               if r.provider == provider]
+    if len(enabled) == 1:
+        return enabled[0].resource_id, None, "unique_resource"
+    # 层级 3：无法可靠判断 -> 未归因（绝不猜）
+    return None, None, "unattributed"
 
 
 def _finalize(event: AIRequestEvent, started: float, status_code: int,
@@ -133,12 +259,22 @@ async def _publish(event: AIRequestEvent, kind: str) -> None:
 @router.api_route("/gateway/{provider}/{path:path}",
                   methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 async def proxy(provider: str, path: str, request: Request):
+    cfg = config_mgr.get(provider)
     adapter = registry.get(provider)
+    if not adapter:
+        # P6-F：自定义 OpenAI-compatible Provider。用户已在 config 配置 base_url + key，
+        # 复用 OpenAICompatibleAdapter（同一套 usage/cost/事件链路），不另起第二套代理。
+        # 仅当明确配置了 base_url 才允许，避免把任意未知路径当 Provider 路由。
+        if cfg and cfg.base_url:
+            adapter = OpenAICompatibleAdapter(
+                name=provider,
+                default_base_url=cfg.base_url,
+                api_prefix="/v1",
+            )
     if not adapter:
         _record_rejected(provider, None, f"unknown provider: {provider}")
         return _error_response(provider, f"unknown provider: {provider}", 404)
 
-    cfg = config_mgr.get(provider)
     if not cfg or not cfg.enabled:
         _record_rejected(provider, None, f"provider '{provider}' 未启用，请先在 Dashboard 配置")
         return _error_response(provider, f"provider '{provider}' 未启用，请先在 Dashboard 配置", 400)
@@ -160,16 +296,12 @@ async def proxy(provider: str, path: str, request: Request):
     runtime_cfg = copy.copy(cfg)
     runtime_cfg.api_keys = [key]
 
-    # Resource 显式归因：X-Monitor-Resource 存在但未注册 → 拒绝（不自动创建）
-    resource_header = request.headers.get("x-monitor-resource")
-    if resource_header:
-        rd = resources.get(resource_header)
-        if rd is None:
-            return _error_response(
-                provider, f"unknown resource: {resource_header}", 400)
-        if not rd.enabled:
-            return _error_response(
-                provider, f"resource disabled: {resource_header}", 400)
+    # Resource Attribution（可解释层级：显式 header > provider default >
+    # 唯一 enabled 回退 > 未归因；绝不猜、绝不回填、绝不碰凭据）
+    resolved_rid, reject, attr_src = _resolve_resource_id(
+        provider, request.headers.get("x-monitor-resource"), resources, config_mgr)
+    if reject is not None:
+        return reject
 
     raw_body = await request.body()
     body = None
@@ -179,7 +311,8 @@ async def proxy(provider: str, path: str, request: Request):
         except ValueError:
             return _error_response(provider, "request body 不是合法 JSON", 400)
 
-    event = _build_event(provider, path, request, body, adapter)
+    event = _build_event(provider, path, request, body, adapter, cfg=cfg,
+                         resource_id=resolved_rid, attribution_source=attr_src)
     url = adapter.upstream_url(runtime_cfg, path)
     if request.url.query:
         url = f"{url}?{request.url.query}"
@@ -245,6 +378,7 @@ async def _proxy_stream(adapter, event, method, url, headers, body, started):
                     yield chunk
         except httpx.HTTPError as e:
             event.error = f"upstream 连接失败: {type(e).__name__}"
+            status = 502  # 连接失败发生在拿到响应之前 → 与 _proxy_once 一致记为 502
         finally:
             sse_data = adapter.parse_sse_lines(bytes(collected))
             usage = adapter.extract_stream_usage(sse_data)

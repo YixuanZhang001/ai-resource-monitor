@@ -93,19 +93,27 @@ class OpenAICompatibleAdapter(ProviderAdapter):
         )
 
     def extract_cache_usage(self, response: Optional[dict]) -> Optional[dict]:
-        """OpenAI-compatible 上游 cache 提取。
+        """OpenAI-compatible 上游 cache 提取（统一 canonical: cache_read_tokens）。
 
-        DeepSeek V4 真实字段（2026-08-20 真实验证确认）：
-          usage.prompt_cache_hit_tokens   命中缓存的 prompt token（→ cache_read）
-          usage.prompt_cache_miss_tokens   未命中（不映射 cache_write；属 input）
-          usage.cached_tokens              别名/总数（当前不用）
-        其余 OpenAI-compat Provider 未返回这些字段时返回 None（不伪造）。
+        优先顺序（绝不估算；上游未返回真实 cache 指标时返回 None）：
+          1. usage.prompt_cache_hit_tokens   （DeepSeek V4 真实字段）
+          2. usage.prompt_tokens_details.cached_tokens  （OpenAI 标准）
+          3. usage.cached_tokens            （部分 Provider 的别名/总数）
+        cache_write 仅当上游给出 prompt_cache_write_tokens 才映射。
         """
         u = ((response or {}).get("usage")) or {}
-        hit = u.get("prompt_cache_hit_tokens")
-        if hit is None:
+        if not isinstance(u, dict):
             return None
-        return {"cache_read_tokens": hit, "cache_write_tokens": None}
+        details = u.get("prompt_tokens_details") or {}
+        cached = u.get("prompt_cache_hit_tokens")
+        if cached is None and isinstance(details, dict):
+            cached = details.get("cached_tokens")
+        if cached is None and u.get("cached_tokens") is not None:
+            cached = u.get("cached_tokens")
+        if cached is None:
+            return None
+        return {"cache_read_tokens": cached,
+                "cache_write_tokens": u.get("prompt_cache_write_tokens")}
 
     def extract_stream_usage(self, sse_data: list[str]) -> Optional[Usage]:
         usage = None

@@ -1,6 +1,9 @@
 # API Key 安全：本地配置绝不入库
 data/config.yaml
 data/config.yml
+# 本地 manual 凭据存储（P1）：仅本机、0600、绝不入库
+data/credentials.json
+data/credentials.json-*
 
 # 数据库永不入库（含备份与 WAL）
 data/*.db

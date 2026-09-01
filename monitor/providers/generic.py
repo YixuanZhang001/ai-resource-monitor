@@ -107,10 +107,24 @@ class GenericAdapter(ProviderAdapter):
         return None
 
     def extract_cache_usage(self, response: Optional[dict]) -> Optional[dict]:
-        u = (response or {}).get("usage") if isinstance(response, dict) else None
-        if isinstance(u, dict) and u.get("prompt_cache_hit_tokens") is not None:
-            return {"cache_read_tokens": u["prompt_cache_hit_tokens"],
-                    "cache_write_tokens": u.get("prompt_cache_write_tokens")}
+        if not isinstance(response, dict):
+            return None
+        u = response.get("usage")
+        if isinstance(u, dict):
+            details = u.get("prompt_tokens_details") or {}
+            cached = u.get("prompt_cache_hit_tokens")
+            if cached is None and isinstance(details, dict):
+                cached = details.get("cached_tokens")
+            if cached is None and u.get("cached_tokens") is not None:
+                cached = u["cached_tokens"]
+            if cached is not None:
+                return {"cache_read_tokens": cached,
+                        "cache_write_tokens": u.get("prompt_cache_write_tokens")}
+        # Gemini: usageMetadata.cachedContentTokenCount
+        um = response.get("usageMetadata")
+        if isinstance(um, dict) and um.get("cachedContentTokenCount") is not None:
+            return {"cache_read_tokens": um["cachedContentTokenCount"],
+                    "cache_write_tokens": None}
         return None
 
     def extract_error(self, status_code: int, response: Optional[dict]) -> Optional[str]:

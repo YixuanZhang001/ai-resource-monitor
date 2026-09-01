@@ -16,15 +16,18 @@ Core 只接收已归一化的 token 数值。
 from __future__ import annotations
 
 import json
+import logging
 from typing import Optional
 
 from .events import AIRequestEvent, Usage
 from .pricing import PricingRegistry
+
+_log = logging.getLogger(__name__)
 from .storage import EventStore
 
 # 构造 AIRequestEvent 时从 raw 提取的直通字段
 _DIRECT_FIELDS = (
-    "provider", "model", "endpoint", "source", "project",
+    "provider", "model", "endpoint", "source", "project", "client",
     "input_tokens", "output_tokens", "total_tokens",
     "cache_read_tokens", "cache_write_tokens", "cache_hit",
     "latency_ms", "status_code",
@@ -70,6 +73,11 @@ class MonitorCore:
 
         pricing 由 Core 承担（Step 4 从 Gateway 迁入）。
         Gateway 不再决定最终成本。
+
+        可靠性铁律（P5-B）：持久化是「尽力而为（best-effort）」。
+        Monitor 是旁路观察者，落库失败绝不能中断被代理的 API 响应，也绝不能
+        把上游错误（502/401 等）吞掉或改写成 500。因此 store.insert 的异常
+        只记录日志、不向上抛出；请求本身照常返回上游结果。
         """
         event = self.normalize(raw)
         if self.pricing:
@@ -84,5 +92,9 @@ class MonitorCore:
             if cost:
                 event.cost = cost.amount
                 event.currency = cost.currency
-        self.store.insert(event)
+        try:
+            self.store.insert(event)
+        except Exception:  # 落库失败：记录但不影响被代理响应
+            _log.warning("event persist failed; monitoring skipped",
+                         exc_info=True)
         return event.request_id

@@ -62,6 +62,14 @@ class ProviderConfig:
     # 但 ConfigManager.load / upsert / save 永不读取或写入真实 secret（Phase 1E-C）。
     api_keys: list = field(default_factory=list)   # 多 Key（每个可对应不同模型/账号）
     test_model: str = ""          # verify 脚本使用的默认测试模型
+    # 可选：本 Provider 网关流量在无 X-Monitor-Resource 头时的默认归属 Resource。
+    # 必须是 resources 中已定义且 enabled 的 resource_id；空字符串表示不默认归属。
+    # 这是用户显式声明的确定性映射（可解释来源），绝不按 Provider 名猜测。
+    default_resource_id: str = ""
+    # 可选：本 Provider 网关流量在无 X-Monitor-Project 头时的默认归属 Project。
+    # 这是用户显式声明的确定性映射（project_attribution_source=configured_default），
+    # 绝不按 Provider 名 / 模型 / API Key / Client 猜测 project。空字符串表示不默认归属。
+    default_project: str = ""
     extra: dict = field(default_factory=dict)
     _key_index: int = field(default=0, repr=False)  # 轮询游标（运行态，不持久化）
 
@@ -132,12 +140,15 @@ class ConfigManager:
                 # load 时直接丢弃——既不放入 api_keys 字段，也不放入 extra，
                 # 真实 secret 仅来自环境变量（CredentialProvider）。
                 known = {"enabled", "base_url", "api_keys", "api_key",
-                         "test_model", "api_key_set"}
+                         "test_model", "api_key_set", "default_resource_id",
+                         "default_project"}
                 self.providers[name] = ProviderConfig(
                     name=name,
                     enabled=bool(p.get("enabled", False)),
                     base_url=p.get("base_url", "") or "",
                     test_model=p.get("test_model", "") or "",
+                    default_resource_id=p.get("default_resource_id", "") or "",
+                    default_project=p.get("default_project", "") or "",
                     extra={k: v for k, v in p.items() if k not in known},
                 )
 
@@ -152,6 +163,10 @@ class ConfigManager:
                         "enabled": p.enabled,
                         "base_url": p.base_url,
                         **({"test_model": p.test_model} if p.test_model else {}),
+                        **({"default_resource_id": p.default_resource_id}
+                           if p.default_resource_id else {}),
+                        **({"default_project": p.default_project}
+                           if p.default_project else {}),
                         **p.extra,
                     })
                     for name, p in self.providers.items()
@@ -217,12 +232,15 @@ class ConfigManager:
         return self.providers.get(name)
 
     def upsert(self, name: str, *, enabled=None, base_url=None, api_key=None,
-               api_keys=None, test_model=None) -> ProviderConfig:
+               api_keys=None, test_model=None, default_resource_id=None,
+               default_project=None) -> ProviderConfig:
         """Dashboard 配置入口（Phase 1E-C 安全边界）。
 
         api_key / api_keys 仅为兼容旧客户端保留的接口参数；凭据边界要求真实
         secret 绝不进入 ConfigManager 内存或磁盘，因此这两个参数被显式忽略
         （不赋值、不持久化）。真实 secret 仅由 CredentialProvider 从环境变量解析。
+        default_resource_id / default_project 为可选、可解释的归因映射
+        （非 secret，正常持久化）。
         """
         with self._lock:
             p = self.providers.get(name) or ProviderConfig(name=name)
@@ -233,6 +251,10 @@ class ConfigManager:
             # 安全边界（H2 修复）：api_key / api_keys 不再写入 ConfigManager。
             if test_model is not None:
                 p.test_model = test_model.strip()
+            if default_resource_id is not None:
+                p.default_resource_id = default_resource_id.strip()
+            if default_project is not None:
+                p.default_project = default_project.strip()
             self.providers[name] = p
         self.save()
         return p
@@ -240,8 +262,11 @@ class ConfigManager:
     def public_view(self, cred: Optional["CredentialProvider"] = None) -> list[dict]:
         """给前端的视图：绝不包含 api_key 本体。
 
-        has_key / key_count 由 CredentialProvider（环境变量）实时判定，
-        而非读取磁盘上的 secret（Phase 1E-C 安全边界）。
+        has_key / key_count / credential_source 由 CredentialProvider 实时判定
+        （环境变量 + 本地 manual store），而非读取磁盘上的 secret
+        （Phase 1E-C 安全边界；P1 新增 manual 来源）。
+
+        credential_source: 'environment' | 'manual' | None
         """
         cred = cred or CredentialProvider()
         return [
@@ -251,6 +276,7 @@ class ConfigManager:
                 "base_url": p.base_url,
                 "has_key": cred.available(p.name),
                 "key_count": 1 if cred.available(p.name) else 0,
+                "credential_source": cred.source(p.name),
                 "test_model": p.test_model,
             }
             for p in self.providers.values()

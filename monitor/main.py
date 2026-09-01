@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -28,7 +29,8 @@ from .collectors.deepseek import DeepSeekObservationCollector
 from .collectors.openrouter import OpenRouterObservationCollector
 from .config import ConfigManager
 from .core import MonitorCore
-from .credential import CredentialProvider
+from .credential import CredentialProvider, _env_name
+from .credential_store import CredentialStore
 from .observe import (ManualObservationCollector, OBS_STATUSES,
                       ObservationCollectorRegistry)
 from .pricing import PricingRegistry
@@ -40,7 +42,8 @@ from .storage import EventStore
 from .stream import SubscriberManager, sse_payload
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data"
+# 数据目录可经环境变量覆盖（测试隔离用；默认仍是项目 data/）。绝不改变生产默认行为。
+DATA_DIR = Path(os.environ.get("MONITOR_DATA_DIR", str(BASE_DIR / "data")))
 DASHBOARD_DIR = BASE_DIR / "dashboard"
 
 registry = ProviderRegistry()
@@ -63,13 +66,34 @@ observation_collectors.register(
 # 运行时 scheduler 引用（lifespan 注入；状态 API 只读）
 _scheduler: Optional[ObservationScheduler] = None
 
+# 本地 manual 凭据存储（P1）。lifespan 注入具体路径；路由与 gateway 共用同一实例。
+cred_store: Optional[CredentialStore] = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 显式增量列迁移：只在这里（真实启动）执行，import 期绝不 ALTER 生产库。
+    store.migrate()
     client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=15.0))
-    # 运行时重建 core/resources（测试 monkeypatch 后绑定新实例）
+    # 运行时重建 core/resources（测试 monkeypatch 后绑定新实例）。
+    # 必须用 global：修因（P6 审计）——旧代码在此处只建了局部变量，模块级
+    # 路由读到的仍是 import 期（可能为空配置）的 core/resources，导致启动后
+    # 运行时配置不生效。
+    global core, resources
     core = MonitorCore(store, pricing)
     resources = ResourceRegistry(config_mgr.resources)
+    # P1：本地 manual 凭据存储（data/credentials.json）；仅本机、gitignore、0600。
+    global cred_store
+    cred_store = CredentialStore(DATA_DIR / "credentials.json")
+    # gateway 与 collectors 都通过 store-backed CredentialProvider 解析凭据
+    # （Environment 优先，Manual 兜底）。绝不把 secret 落 config.yaml / Ledger。
+    gateway_cred = CredentialProvider(cred_store)
+    gateway.cred_provider = gateway_cred
+    # 让 Observation Collector 也能看到 manual 凭据（与环境变量同视角）
+    observation_collectors.register(
+        "openrouter", OpenRouterObservationCollector(gateway_cred))
+    observation_collectors.register(
+        "deepseek", DeepSeekObservationCollector(gateway_cred))
     gateway.init(registry, config_mgr, core, client, resources, streams)
     # Observation Scheduler（后台 asyncio 任务，不阻塞 Gateway 请求链路）
     global _scheduler
@@ -96,25 +120,33 @@ class ProviderIn(BaseModel):
     api_key: Optional[str] = None
     api_keys: Optional[list[str]] = None
     test_model: Optional[str] = None
+    default_resource_id: Optional[str] = None
+    # P6-D：Provider 级默认归属 Project（用户显式声明；绝不猜）
+    default_project: Optional[str] = None
 
 
 @app.get("/api/providers")
 def list_providers():
-    known = {p["name"] for p in config_mgr.public_view()}
+    # credential_source（environment/manual/None）由 store-backed provider 实时判定
+    cred = CredentialProvider(cred_store) if cred_store else CredentialProvider()
+    known = {p["name"] for p in config_mgr.public_view(cred)}
     # 注册表里有但还没配置过的 provider 也列出来，方便直接启用
     missing = [
         {"name": n, "enabled": False, "base_url": registry.default_base_url(n),
-         "has_key": False, "test_model": ""}
+         "has_key": False, "credential_source": None, "test_model": ""}
         for n in registry.names() if n not in known
     ]
-    return {"providers": config_mgr.public_view() + missing}
+    return {"providers": config_mgr.public_view(cred) + missing}
 
 
 @app.put("/api/providers/{name}")
 def upsert_provider(name: str, body: ProviderIn):
-    if not registry.get(name):
-        return JSONResponse(status_code=404,
-                            content={"error": f"unknown provider: {name}"})
+    # 已知 Provider 直接允许；自定义 OpenAI-compatible Provider 需明确提供
+    # base_url + enabled=True（Gateway 才会用 OpenAICompatibleAdapter 路由，不另起代理）。
+    if not registry.get(name) and not (body.base_url and body.enabled):
+        return JSONResponse(status_code=404, content={
+            "error": f"unknown provider: {name} "
+                     "(custom OpenAI-compatible provider requires base_url + enabled=true)"})
     p = config_mgr.upsert(
         name,
         enabled=body.enabled,
@@ -122,14 +154,61 @@ def upsert_provider(name: str, body: ProviderIn):
         api_key=body.api_key if body.api_key else None,
         api_keys=body.api_keys,
         test_model=body.test_model,
+        default_resource_id=body.default_resource_id,
+        default_project=body.default_project,
     )
-    # has_key / key_count 由环境变量（CredentialProvider）实时判定，
-    # 不反映任何已落盘的 secret（Phase 1E-C 安全边界）。
-    cred = CredentialProvider()
+    # has_key / credential_source 由 CredentialProvider 实时判定，
+    # 不反映任何已落盘的 secret（Phase 1E-C 安全边界；P1 含 manual 来源）。
+    cred = CredentialProvider(cred_store) if cred_store else CredentialProvider()
     has_key = cred.available(name)
+    src = cred.source(name)
     return {"name": p.name, "enabled": p.enabled, "base_url": p.base_url,
             "has_key": has_key, "key_count": 1 if has_key else 0,
-            "test_model": p.test_model}
+            "credential_source": src, "test_model": p.test_model,
+            "default_resource_id": p.default_resource_id,
+            "default_project": p.default_project}
+
+
+# ---------------- Credential Access API (P1) ----------------
+# 两条本地凭据来源：
+#   A. Environment Variable（既有，优先级最高）
+#   B. Manual（本地 data/credentials.json，本端点写入）
+# 安全铁律：响应绝不返回 key 本体 / 密文 / 存储内部；仅返回安全元数据。
+# 真实 secret 仅运行时经 CredentialProvider 解析给 Gateway 使用。
+
+
+class CredentialIn(BaseModel):
+    api_key: str                       # 明文仅在本请求体内，绝不存储/回显/落 config
+
+
+@app.put("/api/credentials/{provider}")
+def put_credential(provider: str, body: CredentialIn):
+    # 已知 Provider 或已配置的自定义 Provider（config_mgr 中存在）均可保存凭据；
+    # 凭据边界不变：仅存本机 store，绝不回显 / 落 config / 进前端。
+    if not registry.get(provider) and not config_mgr.get(provider):
+        return JSONResponse(status_code=404,
+                            content={"error": f"unknown provider: {provider}"})
+    if cred_store is None:
+        return JSONResponse(status_code=500,
+                            content={"error": "credential store unavailable"})
+    try:
+        cred_store.save(provider, body.api_key)
+    except ValueError as e:
+        return JSONResponse(status_code=422, content={"error": str(e)})
+    # 绝不回显 key；仅返回安全状态。Environment 仍优先于本 manual 值。
+    return {"provider": provider, "credential_available": True,
+            "credential_source": "manual"}
+
+
+@app.delete("/api/credentials/{provider}")
+def delete_credential(provider: str):
+    if cred_store is None:
+        return JSONResponse(status_code=500,
+                            content={"error": "credential store unavailable"})
+    removed = cred_store.delete(provider)
+    return {"provider": provider, "removed": removed,
+            "credential_source": "environment" if os.environ.get(
+                _env_name(provider)) else None}
 
 
 # ---------------- Resource Management API ----------------
@@ -330,7 +409,7 @@ def api_overview(range: str = Query("all")):
 @app.get("/api/analytics/cost")
 def api_cost(dim: str = Query("provider"),
              range: str = Query("all")):
-    if dim not in ("provider", "model", "source", "project"):
+    if dim not in ("provider", "model", "source", "project", "client"):
         return JSONResponse(status_code=400,
                             content={"error": f"unsupported dim: {dim}"})
     return {"rows": store.analytics_cost(dim, store.parse_range(range))}
@@ -339,7 +418,7 @@ def api_cost(dim: str = Query("provider"),
 @app.get("/api/analytics/tokens")
 def api_tokens(dim: str = Query("provider"),
                range: str = Query("all")):
-    if dim not in ("provider", "model", "source", "project"):
+    if dim not in ("provider", "model", "source", "project", "client"):
         return JSONResponse(status_code=400,
                             content={"error": f"unsupported dim: {dim}"})
     return {"rows": store.analytics_tokens(dim, store.parse_range(range))}
@@ -360,6 +439,55 @@ def api_performance_models(range: str = Query("all")):
     return {"rows": store.performance_by_model(store.parse_range(range))}
 
 
+# ---------------- Phase 3B：Efficiency Derivation Layer ----------------
+# 覆盖度感知的效率派生层（纯 SQL 聚合 + 比率在 Python 计算）。
+# 既有 /api/analytics/* 保持不变（向后兼容）；效率层为新增能力，统一挂在
+# /api/efficiency/* 下，避免改动既有响应结构。禁止：新 Provider / quota /
+# health / rate-limit / subscription / billing_status / 新表 / schema 改造。
+
+_EFFICIENCY_DIMS = ("provider", "model", "source", "project",
+                    "client", "resource_id")
+
+
+@app.get("/api/efficiency/overview")
+def api_efficiency_overview(range: str = Query("all")):
+    """全局效率概览：覆盖度 + 各比率（多货币分别计价）。"""
+    return store.efficiency_overview(store.parse_range(range))
+
+
+@app.get("/api/efficiency/by_dim")
+def api_efficiency_by_dim(dim: str = Query("provider"),
+                          range: str = Query("all")):
+    """按维度（provider/model/source/project/resource_id）聚合效率，
+    每条带 requests/errors/error_rate/tokens(覆盖度)/cost(覆盖度)/cache/latency。"""
+    if dim not in _EFFICIENCY_DIMS:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"unsupported dim: {dim} "
+                             f"(允许: {_EFFICIENCY_DIMS})"})
+    return {"dim": dim,
+            "rows": store.efficiency_by_dim(dim, store.parse_range(range))}
+
+
+@app.get("/api/resources/{resource_id}/balance-trend")
+def api_balance_trend(resource_id: str,
+                      limit: int = Query(20, ge=1, le=200)):
+    """余额观测趋势。返回每期 balance 与相邻已知余额差（balance_delta）。
+
+    注意：绝不返回 burn_rate / API 消费速度字段；observed_balance_change
+    仅为观测余额差值，不代表 API 实际消耗。"""
+    return store.balance_trend(resource_id, limit)
+
+
+@app.get("/api/resources/{resource_id}/health")
+def api_resource_health(resource_id: str,
+                        since: Optional[float] = Query(None)):
+    """Resource 级最小 Health 派生（基于真实请求 status/error，非探测）。
+
+    无数据 -> unknown（不谎报 healthy）；n=0 时 error_rate=None。"""
+    return store.resource_health(resource_id, since)
+
+
 @app.get("/api/requests")
 def api_requests(page: int = Query(1, ge=1),
                  page_size: int = Query(20, ge=1, le=200),
@@ -367,11 +495,14 @@ def api_requests(page: int = Query(1, ge=1),
                  model: Optional[str] = None,
                  source: Optional[str] = None,
                  project: Optional[str] = None,
+                 client: Optional[str] = None,
                  status: Optional[int] = None,
                  range: str = Query("all")):
+    # client 维度（P6-E）：storage 早支持，此前 /api/requests 漏接该参数，
+    # 导致 Dashboard 的 Client 筛选器被静默丢弃。
     return store.query_requests(
         page=page, page_size=page_size, provider=provider, model=model,
-        source=source, project=project, status=status,
+        source=source, project=project, client=client, status=status,
         since=store.parse_range(range))
 
 
@@ -403,6 +534,13 @@ def api_projects():
         if p not in merged:
             merged.append(p)
     return {"projects": merged, "configured": config_mgr.projects}
+
+
+@app.get("/api/clients")
+def api_clients():
+    """已观测到的 Client（Agent/SDK/工具）列表：从 events.client 去重聚合。"""
+    seen = store.distinct_dim_values("client")
+    return {"clients": seen}
 
 
 # ---------------- P0-3：Resource-aware Analytics ----------------
@@ -441,9 +579,14 @@ def _resource_summary(agg: dict, resource_def=None) -> dict:
         "error_count": agg.get("errors", 0),
         "avg_latency_ms": round(agg.get("avg_latency_ms", 0), 1) or None,
         "last_used_at": agg.get("last_used_at"),
+        # 修因（P6 审计）：多币种时绝不给单个汇总数字（无汇率、绝不换算），
+        # 交由 cost_by_currency 分组展示；旧实现把 CNY+USD 相加并硬编码币种。
         "cost": (agg.get("cost_known_sum", 0)
-                           if status in ("known", "mixed") else None),
-        "cost_currency": None,
+                 if status in ("known", "mixed")
+                 and not agg.get("mixed_currency") else None),
+        "cost_currency": agg.get("cost_currency"),
+        "cost_by_currency": agg.get("cost_by_currency") or {},
+        "mixed_currency": bool(agg.get("mixed_currency")),
         "cost_status": status,
     }
 
@@ -462,7 +605,9 @@ def api_resources_usage(range: str = Query("all")):
             "resource_id": rd.resource_id, "requests": 0, "input_tokens": 0,
             "output_tokens": 0, "total_tokens": 0, "cache_read_tokens": 0,
             "errors": 0, "avg_latency_ms": 0, "last_used_at": None,
-            "cost_count": 0, "cost_known_sum": 0})
+            "cost_count": 0, "cost_known_sum": 0,
+            "cost_by_currency": {}, "cost_currency": None,
+            "mixed_currency": False})
         s = _resource_summary(agg, rd)
         s["registered"] = True
         out.append(s)
@@ -477,9 +622,52 @@ def api_resources_usage(range: str = Query("all")):
     unattributed = (_resource_summary(unatt) if unatt else
                     {"resource_id": None, "requests": 0, "input_tokens": 0,
                      "output_tokens": 0, "total_tokens": 0, "cost": None,
-                     "cost_status": "none"})
+                     "cost_currency": None, "cost_by_currency": {},
+                     "mixed_currency": False, "cost_status": "none"})
     return {"resources": out, "unregistered": unregistered,
             "unattributed": unattributed, "range": range}
+
+
+@app.get("/api/attribution/coverage")
+def api_attribution_coverage(range: str = Query("all")):
+    """透明归因覆盖度（read-only 聚合，无新数据层）。
+
+    回答「为什么我的 Resource 数据这么少」：
+    - registered_requests    : resource_id 命中当前 Resource Registry 的请求
+    - unregistered_requests  : resource_id 非 NULL 但已不在 Registry（删除/从未注册）
+    - unattributed_requests  : resource_id IS NULL（未打标，绝不猜测归属）
+    - coverage_pct = registered_requests / total_requests（total=0 时为 None）
+    三桶严格分离；不自动把 unknown 请求归给 Resource、不改历史语义、不引 AI 归因。
+    """
+    since = store.parse_range(range)
+    aggs = {r["resource_id"]: r for r in store.resource_usage_by_resource(since)}
+    registered_ids = {r.resource_id for r in resources.list(enabled_only=False)}
+    total = registered = unregistered = unattributed = 0
+    unreg_ids: set[str] = set()
+    for rid, agg in aggs.items():
+        req = agg.get("requests", 0) or 0
+        total += req
+        if rid == "":
+            unattributed += req
+        elif rid in registered_ids:
+            registered += req
+        else:
+            unregistered += req
+            unreg_ids.add(rid)
+    coverage = (registered / total) if total else None
+    return {
+        "range": range,
+        "total_requests": total,
+        "registered_requests": registered,
+        "unregistered_requests": unregistered,
+        "unattributed_requests": unattributed,
+        "coverage_pct": round(coverage * 100, 2) if coverage is not None else None,
+        "registered_resource_count": len(registered_ids),
+        "unregistered_resource_count": len(unreg_ids),
+        "note": ("coverage_pct = registered_requests / total_requests; "
+                 "unattributed (resource_id IS NULL) 与 unregistered (已不在 Registry) "
+                 "均不计入 registered，绝不猜测归属"),
+    }
 
 
 @app.get("/api/resources/{resource_id}/usage")
@@ -522,16 +710,70 @@ def api_resource_usage(resource_id: str, range: str = Query("all")):
     }
 
 
+# ---------------- Phase 4 Step 1：Resource-level Trend ----------------
+# 纯 events 每日时间序列聚合；不新增表/schema；NULL 保留为独立未归因桶
+# （显式 /unattributed/timeseries 端点，绝不混入任何 Resource）。
+
+@app.get("/api/resources/unattributed/timeseries")
+def api_unattributed_timeseries(days: int = Query(30, ge=1, le=365)):
+    """未归因流量每日趋势（resource_id IS NULL）。
+
+    与 /api/resources/usage 的 unattributed 语义一致：NULL 保留为独立桶，
+    绝不混入任何 Resource，也不猜测归属（不回填历史、不伪造）。"""
+    return {"resource_id": None,
+            "rows": store.resource_timeseries(None, days)}
+
+
+@app.get("/api/resources/{resource_id}/timeseries")
+def api_resource_timeseries(resource_id: str,
+                            days: int = Query(30, ge=1, le=365)):
+    """单 Resource 每日趋势：usage/cost/tokens/errors/latency。
+
+    纯 events 聚合（与资源注册定义无关）；无该 resource_id 事件 → 200 + 空 rows。
+    resource_id IS NULL 的事件绝不混入（由 /unattributed/timeseries 显式暴露）。"""
+    return {"resource_id": resource_id,
+            "rows": store.resource_timeseries(resource_id, days)}
+
+
+def _obs_stale_interval() -> int:
+    """复用 scheduler 配置 interval（项目已有，不硬编码）。
+
+    _scheduler 在 lifespan 注入；未启动（如测试）则回退 config_mgr.scheduler。
+    stale 阈值 = 2 × interval（observation 超过两周期未刷新视为过期）。"""
+    iv = _scheduler.interval_seconds if _scheduler is not None else None
+    if not iv:
+        iv = config_mgr.scheduler.get("interval_seconds", 300)
+    return max(1, int(iv))
+
+
+def _enrich_state(s: dict, resource_id: str, interval: int) -> None:
+    """分离 Resource Health 与 Observation Status（本轮核心修复）。
+
+    - health：基于真实请求 events 派生（authoritative），回答"Resource 本身是否健康"
+    - stale：最新 observation 距今 > 2×interval 视为过期（Monitor 可能已停止），
+      避免冻结的 observation error 永久伪装成 Resource ERROR
+    observation_status 仍保留，语义为"Monitor 能否完成观察"，不混入 health。
+    """
+    s["health"] = store.resource_health(resource_id)
+    observed_at = s.get("observed_at")
+    s["stale"] = bool(observed_at) and (
+        time.time() - float(observed_at) > 2 * interval)
+
+
 @app.get("/api/resources/state")
 def api_resources_state():
     """所有已注册 Resource 的最新状态（无 observation 的注册资源必现，
     observation_status=no_observation）+ 未注册资源的孤儿快照（UNREGISTERED）。
+    每个 resource 附加 authoritative Resource Health + stale 标记（核心修复：
+    observation failure 不再被误判为 Resource ERROR）。
     注意：声明在 /api/resources/{resource_id} 之前（FastAPI 按声明顺序匹配）。"""
     latest = {r["resource_id"]: r for r in store.all_latest_observations()}
+    interval = _obs_stale_interval()
     out = []
     for rd in sorted(resources.list(enabled_only=False),
                      key=lambda r: r.resource_id):
         s = _state_view(latest.get(rd.resource_id))
+        _enrich_state(s, rd.resource_id, interval)
         s["resource_id"] = rd.resource_id
         s["registered"] = True
         out.append(s)
@@ -539,6 +781,7 @@ def api_resources_state():
     for rid, obs in sorted(latest.items()):
         if not resources.exists(rid):
             s = _state_view(obs)
+            _enrich_state(s, rid, interval)
             s["resource_id"] = rid
             s["registered"] = False
             unreg.append(s)
@@ -590,10 +833,12 @@ def api_resource_state(resource_id: str):
                 status_code=404,
                 content={"error": f"unknown resource: {resource_id}"})
         s = _state_view(latest)
+        _enrich_state(s, resource_id, _obs_stale_interval())
         s["resource_id"] = resource_id
         s["registered"] = False
         return s
     s = _state_view(latest)
+    _enrich_state(s, resource_id, _obs_stale_interval())
     s["resource_id"] = resource_id
     s["registered"] = True
     return s
