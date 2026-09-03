@@ -395,7 +395,8 @@ class EventStore:
         return self._query(
             f"""SELECT {expr} AS name, currency,
                        ROUND(SUM(cost), 6) AS cost,
-                       COUNT(*) AS requests
+                       COUNT(*) AS requests,
+                       COALESCE(SUM(total_tokens), 0) AS total_tokens
                 FROM events{where + ' AND' if where else ' WHERE'}
                      cost IS NOT NULL
                 GROUP BY {expr}, currency
