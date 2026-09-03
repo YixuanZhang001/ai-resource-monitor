@@ -13,6 +13,15 @@
   --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"PingFang SC","Microsoft YaHei",sans-serif;
   --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
 }
+/* 夜间模式：仅覆盖颜色变量，组件样式全部走 var() 自动适配 */
+[data-theme="dark"]{
+  --bg:#0f1420; --panel:#171e2e; --panel2:#1f2739; --line:#2a3347;
+  --text:#e5e9f2; --dim:#8b93a7; --bright:#f7f9ff;
+  --accent:#6366f1; --accent-soft:#242e4d;
+  --green:#22c55e; --yellow:#f59e0b; --red:#ef4444; --cyan:#818cf8;
+}
+[data-theme="dark"] header{background:rgba(15,20,32,.85)}
+[data-theme="dark"] .card,[data-theme="dark"] .panel{box-shadow:0 1px 2px rgba(0,0,0,.35)}
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:14px;line-height:1.6;-webkit-font-smoothing:antialiased}
 ::selection{background:var(--accent);color:#fff}
@@ -98,6 +107,9 @@ td.mono{color:var(--dim);font-family:var(--mono);font-size:12px}
 .trend .cd{font-size:9px;color:var(--dim);transform:rotate(-45deg);transform-origin:top right;white-space:nowrap;margin-top:2px}
 .legend{display:flex;gap:16px;font-size:11px;color:var(--dim);margin-top:8px}
 .legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:middle}
+/* USAGE TREND 图例可点击自选序列 */
+#usage-legend span{cursor:pointer;user-select:none}
+#usage-legend span.off{opacity:.35}
 
 /* tabs */
 .tabs{display:flex;gap:6px;margin-bottom:12px}
@@ -166,7 +178,8 @@ textarea:focus{outline:none;border-color:var(--accent)}
     <button data-r="30d">30D</button>
     <button data-r="all" class="active">ALL</button>
   </div>
-  <button id="btn-import" class="import-btn" title="导入 DeepSeek 平台账单 CSV（amount + cost）">导入账单</button>
+  <button id="theme-toggle" class="import-btn" title="切换日间/夜间模式">夜间模式</button>
+  <button id="btn-import" class="import-btn" title="导入平台账单 CSV（amount + cost）">导入账单</button>
   <input type="file" id="import-amount" accept=".csv" hidden>
   <input type="file" id="import-cost" accept=".csv" hidden>
   <span id="import-status" class="import-status"></span>
@@ -179,7 +192,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
     </div>
   <div class="grid" style="grid-template-columns:1fr 1fr">
     <div class="sect"><div class="sect-title">COST BY PROVIDER</div><div class="panel" id="ov-provider"></div></div>
-    <div class="sect"><div class="sect-title">TOKEN TREND (14D)</div><div class="trend" id="ov-trend"></div>
+    <div class="sect"><div class="sect-title">TOKEN TREND (30D)</div><div class="trend" id="ov-trend"></div>
       <div class="legend"><span><i style="background:var(--cyan)"></i>INPUT</span><span><i style="background:var(--yellow)"></i>OUTPUT</span></div>
     </div>
   </div>
@@ -200,9 +213,14 @@ textarea:focus{outline:none;border-color:var(--accent)}
         <div id="cache-day-detail" style="display:none;margin-top:10px"></div>
       </div>
       <div>
-        <div class="hint2" style="margin-bottom:8px">USAGE TREND · 总用量：输入 / 输出 / 缓存命中随时间变化（token）。输出走右侧独立坐标轴（与命中量级相差悬殊时仍可读）。</div>
+        <div class="hint2" style="margin-bottom:8px">USAGE TREND · 总用量：单坐标轴；TOTAL=总线（总 tokens）。点击下方图例可自选显示哪些序列。</div>
         <div class="chart-wrap"><canvas id="usage-line"></canvas></div>
-        <div class="legend"><span><i style="background:#4f46e5"></i>INPUT（左轴）</span><span><i style="background:#d97706"></i>OUTPUT（右轴）</span><span><i style="background:#16a34a"></i>CACHE HIT（左轴）</span></div>
+        <div class="legend" id="usage-legend">
+          <span data-s="input"><i style="background:#4f46e5"></i>INPUT</span>
+          <span data-s="output"><i style="background:#d97706"></i>OUTPUT</span>
+          <span data-s="cache"><i style="background:#16a34a"></i>CACHE HIT</span>
+          <span data-s="total"><i style="background:#64748b"></i>TOTAL · 总线</span>
+        </div>
       </div>
     </div>
   </div>
@@ -400,6 +418,43 @@ window.addEventListener('hashchange',route);
    不依赖今日是否发起请求）；下方 COST BY PROVIDER / TREND 同样随 RANGE。
    明确区分：上方卡片 = 历史聚合（Historical Usage）；底部 RECENT REQUESTS = 最近 20 条事件。
    成本语义：cost_by_currency 为空（= 未知）→ 显示 —，绝不显示 0 / ¥0。 */
+/* ── 夜间模式 ── 颜色全部经 CSS 变量覆盖；Chart.js 的轴/网格色在渲染期
+   读取当前主题（chartColors()），切换后重渲染趋势图即可换肤。
+   首选 localStorage 记忆，其次跟随系统 prefers-color-scheme。 */
+const THEME_KEY='arm-theme';
+const isDark=()=>document.documentElement.getAttribute('data-theme')==='dark';
+function chartColors(){return isDark()
+  ? {tick:'#8b93a7',grid:'#2a3347',hit:'#22c55e',miss:'#818cf8',out:'#f59e0b',total:'#94a3b8'}
+  : {tick:'#6b7280',grid:'#e6e9ee',hit:'#16a34a',miss:'#4f46e5',out:'#d97706',total:'#64748b'};}
+function applyTheme(t){
+  document.documentElement.setAttribute('data-theme',t);
+  try{localStorage.setItem(THEME_KEY,t)}catch(e){}
+  const btn=$('#theme-toggle'); if(btn) btn.textContent = t==='dark' ? '日间模式' : '夜间模式';
+}
+let THEME_CUR='light';
+try{THEME_CUR=localStorage.getItem(THEME_KEY)||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');}catch(e){}
+applyTheme(THEME_CUR);
+$('#theme-toggle').addEventListener('click',()=>{
+  applyTheme(isDark()?'light':'dark');
+  if(window.LAST_TREND_ROWS && window.LAST_TREND_ROWS.length)renderCacheCharts(window.LAST_TREND_ROWS);
+});
+
+/* ── USAGE TREND 序列自选 ── 单坐标轴；点图例开关序列，选择持久化。
+   OUTPUT 与命中量级悬殊时用户可自行关掉大序列对比小序列。 */
+const SERIES_KEY='arm-usage-series';
+const DEF_SERIES={input:true,output:true,cache:true,total:true};
+let SERIES=(()=>{try{return Object.assign({},DEF_SERIES,JSON.parse(localStorage.getItem(SERIES_KEY)||'{}'))}catch(e){return Object.assign({},DEF_SERIES)}})();
+function syncUsageLegend(){
+  $$('#usage-legend span').forEach(el=>el.classList.toggle('off',!SERIES[el.dataset.s]));
+}
+$$('#usage-legend span').forEach(el=>el.addEventListener('click',()=>{
+  const s=el.dataset.s; if(!s)return;
+  SERIES[s]=!SERIES[s];
+  try{localStorage.setItem(SERIES_KEY,JSON.stringify(SERIES))}catch(e){}
+  syncUsageLegend();
+  if(window.LAST_TREND_ROWS)renderCacheCharts(window.LAST_TREND_ROWS);
+}));
+
 /* ── 趋势图表共享时间档位（DAY=今日按小时 / MONTH=本月按天 / 30D=近30天按天）──
    一个选择器联合控制 CACHE IMPACT 与 USAGE TREND 两张图；
    数据源 = /api/analytics/tokens/timeseries（start/end + granularity 通用范式），
@@ -420,15 +475,17 @@ function trendWindow(){
 }
 
 /* ── 趋势图表渲染 ──
-   USAGE TREND：OUTPUT 走右侧独立 y 轴 —— 命中(908M)与输出(2.7M)量级悬殊，
-   共用线性轴时输出会被压成贴零直线；双轴让三条序列都可读，tooltip 给精确值。
+   USAGE TREND：单坐标轴（不做左右双轴）；TOTAL 总线 + 三条 token 序列，
+   显示哪些由 SERIES 决定（点图例自选，持久化）；轴/网格/序列色随主题。
    CACHE IMPACT：堆叠柱 + onClick 查看当日明细。 */
 function renderCacheCharts(rows){
   if(typeof Chart==='undefined')return;
-  Chart.defaults.color='#6b7280';
-  Chart.defaults.borderColor='#e6e9ee';
+  window.LAST_TREND_ROWS=rows||[];
+  syncUsageLegend();
+  const CC=chartColors();
+  Chart.defaults.color=CC.tick;
+  Chart.defaults.borderColor=CC.grid;
   Chart.defaults.font.family='inherit';
-  const C={hit:'#16a34a',miss:'#4f46e5',out:'#d97706'};
   const kf=v=> v>=1e6? (v/1e6).toFixed(v>=1e7?0:1)+'M' : v>=1000? Math.round(v/1000)+'k' : String(v);
   const lbl=r=> (r.day&&r.day.length>10)? r.day.slice(11,16) : (r.day?r.day.slice(5):'');
   const bar=document.getElementById('cache-bar');
@@ -436,12 +493,12 @@ function renderCacheCharts(rows){
     if(window._cacheBar)window._cacheBar.destroy();
     const labels=rows.map(lbl);
     window._cacheBar=new Chart(bar,{type:'bar',data:{labels,datasets:[
-      {label:'CACHE HIT 命中',data:rows.map(r=>r.cache_read_tokens||0),backgroundColor:C.hit,stack:'s'},
-      {label:'CACHE MISS 未命中',data:rows.map(r=>Math.max(0,(r.input_tokens||0)-(r.cache_read_tokens||0))),backgroundColor:C.miss,stack:'s'},
-      {label:'OUTPUT 输出',data:rows.map(r=>r.output_tokens||0),backgroundColor:C.out,stack:'s'}]},
+      {label:'CACHE HIT 命中',data:rows.map(r=>r.cache_read_tokens||0),backgroundColor:CC.hit,stack:'s'},
+      {label:'CACHE MISS 未命中',data:rows.map(r=>Math.max(0,(r.input_tokens||0)-(r.cache_read_tokens||0))),backgroundColor:CC.miss,stack:'s'},
+      {label:'OUTPUT 输出',data:rows.map(r=>r.output_tokens||0),backgroundColor:CC.out,stack:'s'}]},
       options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
         onClick:(evt,els)=>{ if(!els.length)return; showCacheDayDetail(rows[els[0].index]); },
-        scales:{x:{stacked:true,grid:{display:false},ticks:{maxRotation:60,autoSkip:true}},y:{stacked:true,grid:{color:'#e6e9ee'},ticks:{callback:kf}}},
+        scales:{x:{stacked:true,grid:{display:false},ticks:{maxRotation:60,autoSkip:true}},y:{stacked:true,grid:{color:CC.grid},ticks:{callback:kf,color:CC.tick}}},
         plugins:{legend:{display:false},tooltip:{callbacks:{
           title:items=>rows[items[0].dataIndex]?(TREND_RANGE==='day'?'':items[0].label+' · ')+ (rows[items[0].dataIndex].day||''):'',
           label:c=>c.dataset.label+': '+fmt.n(c.parsed.y)+' tok'}}}}});
@@ -450,14 +507,15 @@ function renderCacheCharts(rows){
   if(line){
     if(window._usageLine)window._usageLine.destroy();
     const labels=rows.map(lbl);
-    window._usageLine=new Chart(line,{type:'line',data:{labels,datasets:[
-      {label:'INPUT',data:rows.map(r=>r.input_tokens||0),borderColor:C.miss,backgroundColor:C.miss,tension:.3,pointRadius:0,yAxisID:'y'},
-      {label:'OUTPUT',data:rows.map(r=>r.output_tokens||0),borderColor:C.out,backgroundColor:C.out,tension:.3,pointRadius:2,pointHitRadius:8,yAxisID:'y1'},
-      {label:'CACHE HIT',data:rows.map(r=>r.cache_read_tokens||0),borderColor:C.hit,backgroundColor:C.hit,tension:.3,pointRadius:0,yAxisID:'y'}]},
+    const ds=[];
+    if(SERIES.input) ds.push({label:'INPUT',data:rows.map(r=>r.input_tokens||0),borderColor:CC.miss,backgroundColor:CC.miss,tension:.3,pointRadius:0});
+    if(SERIES.output) ds.push({label:'OUTPUT',data:rows.map(r=>r.output_tokens||0),borderColor:CC.out,backgroundColor:CC.out,tension:.3,pointRadius:2,pointHitRadius:8});
+    if(SERIES.cache) ds.push({label:'CACHE HIT',data:rows.map(r=>r.cache_read_tokens||0),borderColor:CC.hit,backgroundColor:CC.hit,tension:.3,pointRadius:0});
+    if(SERIES.total) ds.push({label:'TOTAL · 总线',data:rows.map(r=>r.total_tokens||0),borderColor:CC.total,backgroundColor:CC.total,borderDash:[6,3],tension:.3,pointRadius:0});
+    window._usageLine=new Chart(line,{type:'line',data:{labels,datasets:ds},
       options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
         scales:{x:{grid:{display:false},ticks:{maxRotation:60,autoSkip:true}},
-          y:{grid:{color:'#e6e9ee'},ticks:{callback:kf}},
-          y1:{position:'right',grid:{drawOnChartArea:false},ticks:{callback:kf}}},
+          y:{grid:{color:CC.grid},ticks:{callback:kf,color:CC.tick}}},
         plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.dataset.label+': '+fmt.n(c.parsed.y)+' tok'}}}}});
   }
 }
@@ -486,7 +544,7 @@ async function renderOverview(){
     get('/overview'),                         // 全局 RANGE（默认 all = 全量历史）
     get('/resources/usage'),
     get('/analytics/cost',{dim:'provider'}),
-    get('/analytics/tokens/timeseries',{days:14}),
+    get('/analytics/tokens/timeseries',{days:30}),
     get('/events',{limit:20}),
     get('/resources/state'),
     get('/analytics/tokens/timeseries',{start:tw.start,end:tw.end,granularity:tw.granularity})]);
@@ -566,7 +624,7 @@ async function renderOverview(){
     :'<div class="empty" style="margin:auto">NO DATA<br><span style="color:var(--dim);font-size:11px">No AI requests recorded yet.</span></div>';
   const tr=trend.rows||[];
   const tmax=Math.max(1,...tr.map(r=>r.total_tokens||0));
-  $('#ov-trend').innerHTML=tr.length?tr.slice(-14).map(r=>`<div class="col" title="${r.day}"><div class="cb" style="height:${((r.input_tokens||0)/tmax*100).toFixed(1)}%"></div><div class="cb out" style="height:${((r.output_tokens||0)/tmax*100).toFixed(1)}%"></div><div class="cd">${r.day.slice(5)}</div></div>`).join('')
+  $('#ov-trend').innerHTML=tr.length?tr.slice(-30).map(r=>`<div class="col" title="${r.day}"><div class="cb" style="height:${((r.input_tokens||0)/tmax*100).toFixed(1)}%"></div><div class="cb out" style="height:${((r.output_tokens||0)/tmax*100).toFixed(1)}%"></div><div class="cd">${r.day.slice(5)}</div></div>`).join('')
     :'<div class="empty" style="margin:auto">NO DATA<br><span style="color:var(--dim);font-size:11px">No AI requests recorded yet.</span></div>';
   renderRecentEvents(ev.events||[]);
   renderCacheCharts(trendSeries.rows||[]);
@@ -673,7 +731,7 @@ async function renderCosts(){
 }
 async function renderTokens(){
   const dim=$('#token-tabs .active').dataset.dim;
-  const [d,tr]=await Promise.all([get('/analytics/tokens',{dim}),get('/analytics/tokens/timeseries',{days:14})]);
+  const [d,tr]=await Promise.all([get('/analytics/tokens',{dim}),get('/analytics/tokens/timeseries',{days:30})]);
   const rows=d.rows||[],max=Math.max(1,...rows.map(r=>r.total_tokens||0));
   $('#token-panel').innerHTML=`<table><thead><tr><th>${dim.toUpperCase()}</th><th class="num">Requests</th><th class="num">Input</th><th class="num">Output</th><th class="num">Total</th><th class="num">Cache Read</th><th class="num">Cache Write</th><th class="num">Cache%</th></tr></thead><tbody>`+
     rows.map(r=>{const rp=cacheReadPct(r.cache_read_tokens,r.input_tokens);
@@ -682,7 +740,7 @@ async function renderTokens(){
     (rows.length?'':'<tr><td colspan="5"><div class="empty">NO TOKEN DATA<br><span style="color:var(--dim);font-size:11px">No AI requests recorded yet.</span></div></td></tr>')+
     '</tbody></table>';
   const tmax=Math.max(1,...tr.rows.map(r=>r.total_tokens||0));
-  $('#token-trend').innerHTML=(tr.rows||[]).slice(-14).map(r=>`<div class="col" title="${r.day}"><div class="cb" style="height:${((r.input_tokens||0)/tmax*100).toFixed(1)}%"></div><div class="cb out" style="height:${((r.output_tokens||0)/tmax*100).toFixed(1)}%"></div><div class="cb" style="height:${((r.cache_read_tokens||0)/tmax*100).toFixed(1)}%;background:var(--green)" title="缓存命中 token"></div><div class="cd">${r.day.slice(5)}</div></div>`).join('')||'<div class="empty" style="margin:auto">NO DATA<br><span style="color:var(--dim);font-size:11px">No AI requests recorded yet.</span></div>';
+  $('#token-trend').innerHTML=(tr.rows||[]).slice(-30).map(r=>`<div class="col" title="${r.day}"><div class="cb" style="height:${((r.input_tokens||0)/tmax*100).toFixed(1)}%"></div><div class="cb out" style="height:${((r.output_tokens||0)/tmax*100).toFixed(1)}%"></div><div class="cb" style="height:${((r.cache_read_tokens||0)/tmax*100).toFixed(1)}%;background:var(--green)" title="缓存命中 token"></div><div class="cd">${r.day.slice(5)}</div></div>`).join('')||'<div class="empty" style="margin:auto">NO DATA<br><span style="color:var(--dim);font-size:11px">No AI requests recorded yet.</span></div>';
 }
 
 /* ── Performance ── */
