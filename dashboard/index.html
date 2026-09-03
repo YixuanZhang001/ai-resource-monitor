@@ -148,6 +148,10 @@ td.mono{color:var(--dim);font-family:var(--mono);font-size:12px}
 .p-save:hover{background:var(--accent);color:#fff}
 .p-save.saved{border-color:var(--green);color:var(--green)}
 .hint2{font-size:11px;color:var(--dim);margin-top:5px}
+.warn-box{font-size:12px;line-height:1.6;color:var(--yellow);background:rgba(217,119,6,.10);border:1px solid var(--yellow);border-left:3px solid var(--yellow);border-radius:8px;padding:10px 12px;margin-bottom:10px}
+.warn-box b{color:var(--bright)}
+.note-box{font-size:11px;line-height:1.55;color:var(--text);background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 12px;margin-bottom:8px}
+.note-box b{color:var(--cyan)}
 .save-btn{padding:6px 16px;background:var(--panel);border:1px solid var(--accent);color:var(--accent);border-radius:8px;cursor:pointer;font-family:var(--font);font-weight:600;font-size:12px}
 .save-btn:hover{background:var(--accent);color:#fff}
 .msg{font-size:12px;color:var(--green);min-height:16px;margin-top:8px}
@@ -321,7 +325,8 @@ textarea:focus{outline:none;border-color:var(--accent)}
 
   <section class="page" id="page-providers">
     <div class="sect"><div class="sect-title">PROVIDERS · 配置</div>
-      <div class="hint2" style="margin-bottom:8px">Dashboard 统计仅来自真实调用：配置 Key 后需把 AI 客户端 base_url 指向 <span class="mono" style="color:var(--cyan)">http://127.0.0.1:8787/gateway/&lt;provider&gt;</span> 发起调用才会产生数据。API Key 绝不写入 <span class="mono">data/config.yaml</span>（写了会被静默丢弃），仅存环境变量或本机凭据文件，不落事件库、不下发前端。<br><b>归因提示</b>：想看到「哪个 Resource / Project / Client」用了多少，请让客户端带请求头 <span class="mono">X-Monitor-Resource</span> / <span class="mono">X-Monitor-Project</span> / <span class="mono">X-Monitor-Client</span>；或在 config.yaml 设置 <span class="mono">providers.&lt;name&gt;.default_resource_id</span> / <span class="mono">default_project</span> 作为无头流量的兜底。未配置时这类流量记为 <span class="mono">Unknown</span>（绝不猜测）。<br>自定义 OpenAI-compatible Provider：在 config.yaml 的 <span class="mono">providers</span> 段新增一项（任意名称）+ <span class="mono">base_url</span> + 启用，即复用同一套网关（无需第二套代理）。</div>
+      <div class="warn-box"><b>SECURITY</b> · API Key is <b>never</b> written to <span class="mono">data/config.yaml</span> (silently dropped if you do). It lives only in an env var or a local credential file — never in the event DB, never sent to the frontend. Stats come only from real calls: point your client <span class="mono">base_url</span> to <span class="mono" style="color:var(--cyan)">http://127.0.0.1:8787/gateway/&lt;provider&gt;</span> to generate data.</div>
+      <div class="note-box"><b>Attribution</b> · To break down usage by Resource / Project / Client, send headers <span class="mono">X-Monitor-Resource</span> / <span class="mono">X-Monitor-Project</span> / <span class="mono">X-Monitor-Client</span>, or set <span class="mono">providers.&lt;name&gt;.default_resource_id</span> / <span class="mono">default_project</span> as a fallback for headless traffic. Unattributed traffic is labeled <span class="mono">Unknown</span> (never guessed). Custom OpenAI-compatible provider: add an entry under <span class="mono">providers</span> in config.yaml with a <span class="mono">base_url</span> + enabled — reuses the same gateway.</div>
       <div class="panel" id="prov-panel"></div>
     </div>
   </section>
@@ -473,6 +478,13 @@ function trendWindow(){
   const d=new Date(now);d.setDate(d.getDate()-29);
   return {start:dayStart(d),end:nowTs,granularity:'day',label:'近30天 · 按天'};
 }
+/* x 轴：autoSkip 会吞掉最后一格（今天）标签，故关闭 autoSkip 并手动抽稀，
+   强制首/尾（今天）始终可见。 */
+const trendTicks={maxRotation:60,autoSkip:false,callback:function(v,i,ticks){
+  const n=ticks.length; if(!n)return '';
+  const step=Math.max(1,Math.ceil(n/12));
+  return (i===n-1||i%step===0)?String(this.getLabelForValue(v)):'';
+}};
 
 /* ── 趋势图表渲染 ──
    USAGE TREND：单坐标轴（不做左右双轴）；TOTAL 总线 + 三条 token 序列，
@@ -498,7 +510,7 @@ function renderCacheCharts(rows){
       {label:'OUTPUT 输出',data:rows.map(r=>r.output_tokens||0),backgroundColor:CC.out,stack:'s'}]},
       options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
         onClick:(evt,els)=>{ if(!els.length)return; showCacheDayDetail(rows[els[0].index]); },
-        scales:{x:{stacked:true,grid:{display:false},ticks:{maxRotation:60,autoSkip:true}},y:{stacked:true,grid:{color:CC.grid},ticks:{callback:kf,color:CC.tick}}},
+        scales:{x:{stacked:true,grid:{display:false},ticks:trendTicks},y:{stacked:true,grid:{color:CC.grid},ticks:{callback:kf,color:CC.tick}}},
         plugins:{legend:{display:false},tooltip:{callbacks:{
           title:items=>rows[items[0].dataIndex]?(TREND_RANGE==='day'?'':items[0].label+' · ')+ (rows[items[0].dataIndex].day||''):'',
           label:c=>c.dataset.label+': '+fmt.n(c.parsed.y)+' tok'}}}}});
@@ -514,7 +526,7 @@ function renderCacheCharts(rows){
     if(SERIES.total) ds.push({label:'TOTAL · 总线',data:rows.map(r=>r.total_tokens||0),borderColor:CC.total,backgroundColor:CC.total,borderDash:[6,3],tension:.3,pointRadius:0});
     window._usageLine=new Chart(line,{type:'line',data:{labels,datasets:ds},
       options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
-        scales:{x:{grid:{display:false},ticks:{maxRotation:60,autoSkip:true}},
+        scales:{x:{grid:{display:false},ticks:trendTicks},
           y:{grid:{color:CC.grid},ticks:{callback:kf,color:CC.tick}}},
         plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.dataset.label+': '+fmt.n(c.parsed.y)+' tok'}}}}});
   }
@@ -620,11 +632,11 @@ async function renderOverview(){
   ].join('');
   const rows=prov.rows||[];
   const max=Math.max(1,...rows.map(r=>r.cost??0));
-  $('#ov-provider').innerHTML=rows.length?rows.map(r=>`<div class="bar-row"><div class="bn">${esc(r.name)}</div><div class="bar-track"><div class="bar-fill" style="width:${((r.cost??0)/max*100).toFixed(1)}%"></div></div><div class="bar-val">${fmtPer1M(r.cost,r.total_tokens,r.currency)||'—'} <span style="color:var(--dim)">${fmt.money(r.cost,r.currency)}${(r.cost??0).toFixed(4)}</span></div></div>`).join('')
+  $('#ov-provider').innerHTML=rows.length?rows.map(r=>`<div class="bar-row" title="${esc(r.name)} · ${fmt.money(r.cost,r.currency)}${(r.cost??0).toFixed(4)} · ${fmt.n(r.total_tokens)} tok"><div class="bn">${esc(r.name)}</div><div class="bar-track"><div class="bar-fill" style="width:${((r.cost??0)/max*100).toFixed(1)}%"></div></div><div class="bar-val">${fmtPer1M(r.cost,r.total_tokens,r.currency)||'—'} <span style="color:var(--dim)">${fmt.money(r.cost,r.currency)}${(r.cost??0).toFixed(4)}</span></div></div>`).join('')
     :'<div class="empty" style="margin:auto">NO DATA<br><span style="color:var(--dim);font-size:11px">No AI requests recorded yet.</span></div>';
   const tr=trend.rows||[];
   const tmax=Math.max(1,...tr.map(r=>r.total_tokens||0));
-  $('#ov-trend').innerHTML=tr.length?tr.slice(-30).map(r=>`<div class="col" title="${r.day}"><div class="cb" style="height:${((r.input_tokens||0)/tmax*100).toFixed(1)}%"></div><div class="cb" style="height:${((r.cache_read_tokens||0)/tmax*100).toFixed(1)}%;background:var(--green)" title="缓存命中 token"></div><div class="cb out" style="height:${((r.output_tokens||0)/tmax*100).toFixed(1)}%"></div><div class="cd">${r.day.slice(5)}</div></div>`).join('')
+  $('#ov-trend').innerHTML=tr.length?tr.slice(-30).map(r=>`<div class="col" title="${esc(r.day)}\nINPUT ${fmt.n(r.input_tokens)} · CACHE HIT ${fmt.n(r.cache_read_tokens)} · OUTPUT ${fmt.n(r.output_tokens)}\nTOTAL ${fmt.n(r.total_tokens)} tok"><div class="cb" style="height:${((r.input_tokens||0)/tmax*100).toFixed(1)}%"></div><div class="cb" style="height:${((r.cache_read_tokens||0)/tmax*100).toFixed(1)}%;background:var(--green)"></div><div class="cb out" style="height:${((r.output_tokens||0)/tmax*100).toFixed(1)}%"></div><div class="cd">${r.day.slice(5)}</div></div>`).join('')
     :'<div class="empty" style="margin:auto">NO DATA<br><span style="color:var(--dim);font-size:11px">No AI requests recorded yet.</span></div>';
   renderRecentEvents(ev.events||[]);
   renderCacheCharts(trendSeries.rows||[]);
@@ -760,9 +772,9 @@ async function renderPerformance(){
 async function renderProviders(){
   const d=await fetch('/api/providers').then(r=>r.json());
   $('#prov-panel').innerHTML=d.providers.map(p=>`<div class="prov-row" data-name="${esc(p.name)}">
-    <div class="pname">${esc(p.name)}<small>${p.enabled?'已启用':'已停用'} · 凭据:${p.credential_source==='environment'?'环境变量':p.credential_source==='manual'?'本地文件':'未配置'}</small></div>
-    <div><input class="p-url" value="${esc(p.base_url||'')}" placeholder="https://api.deepseek.com"><div class="hint2">API Base URL（留空=官方默认；改为网关地址可统一经 Monitor 统计）</div></div>
-    <div><textarea class="p-keys" rows="2" placeholder="${p.credential_source==='manual'?'已存 manual key · 留空保存将清除':'粘贴 API Key（单行，仅存本机，不回显）'}"></textarea><div class="hint2">API Key（单行；仅本机，不回显；环境变量优先于此处）</div></div>
+    <div class="pname">${esc(p.name)}<small>${p.enabled?'enabled':'disabled'} · cred: ${p.credential_source==='environment'?'env':p.credential_source==='manual'?'local file':'none'}</small></div>
+    <div><input class="p-url" value="${esc(p.base_url||'')}" placeholder="https://api.deepseek.com"><div class="hint2">Base URL · blank = provider default. Set the gateway URL to route calls via Monitor.</div></div>
+    <div><textarea class="p-keys" rows="2" placeholder="${p.credential_source==='manual'?'stored locally · clear to remove':'paste API key (local only)'}"></textarea><div class="hint2">API Key · local only, never shown. Env var takes priority.</div></div>
     <div class="p-ctrl"><div class="toggle ${p.enabled?'on':''}" title="enable/disable"></div><span style="font-size:10px;color:${p.enabled?'var(--green)':'var(--dim)'}">${p.enabled?'ENABLED':'DISABLED'}</span></div>
     <div><button class="p-save">SAVE</button></div>
   </div>`).join('')||'<div class="empty">无 Provider</div>';
