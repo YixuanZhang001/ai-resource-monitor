@@ -293,6 +293,72 @@ class EventStore:
             params,
         )
 
+    # ---------- 缓存节省估算（成本级，供 CACHE IMPACT 展示） ----------
+    # 默认缓存单价（¥ / 1M token，空闲时段）。来源：用户提供的 DeepSeek 计费表。
+    # 高峰时段 ≈ 空闲 ×2（表中 高峰/空闲 比值均为 2）。输出单价与是否命中缓存无关，
+    # 故节省只来自「输入命中」相对「输入未命中」的价差。
+    # 仅 deepseek 内置默认；其他 provider 未配置 → 跳过（savings 不计入）。
+    DEFAULT_CACHE_PRICING: dict = {
+        "deepseek": {
+            "reasoner": {"hit": 0.15, "miss": 4.5},   # 列2：deepseek-reasoner
+            "chat":     {"hit": 0.05, "miss": 1.5},   # 列1/列3：deepseek-chat
+        },
+    }
+
+    @staticmethod
+    def _cache_rate_for(provider, model, pricing):
+        tbl = (pricing or {}).get(provider) or \
+              EventStore.DEFAULT_CACHE_PRICING.get(provider)
+        if not tbl:
+            return None
+        # 支持两种形态：扁平 {hit, miss}（应用于该 provider 所有模型）
+        # 或按模型 {model_key:{hit,miss}}。
+        if "hit" in tbl and "miss" in tbl:
+            return {"hit": tbl["hit"], "miss": tbl["miss"]}
+        m = (model or "").lower()
+        if "reasoner" in m and tbl.get("reasoner"):
+            return tbl["reasoner"]
+        if tbl.get("chat"):
+            return tbl["chat"]
+        return next(iter(tbl.values()))
+
+    def cache_savings(self, since: Optional[float] = None,
+                      pricing: Optional[dict] = None) -> dict:
+        """估算因缓存命中而省下的费用（vs 全部按未命中计价的反事实基线）。
+
+        节省 = Σ_model cache_read_tokens × (miss单价 − hit单价) / 1e6。
+        仅统计上报了 cache_read_tokens 的请求（其余调用本就不感知缓存）。
+        返回 {currency, total, by_provider, assumption}。
+        """
+        where, params = self._since(since)
+        rows = self._query(
+            f"""SELECT provider, model,
+                       COALESCE(SUM(cache_read_tokens), 0) AS cache_read
+                FROM events{where} AND cache_read_tokens IS NOT NULL
+                GROUP BY provider, model""",
+            params,
+        )
+        total = 0.0
+        by_provider: dict = {}
+        unpriced: list = []
+        for r in rows:
+            rate = self._cache_rate_for(r["provider"], r["model"], pricing)
+            if rate is None:
+                if r["provider"] not in unpriced:
+                    unpriced.append(r["provider"])
+                continue
+            saved = (r["cache_read"] / 1_000_000.0) * (rate["miss"] - rate["hit"])
+            total += saved
+            by_provider[r["provider"]] = round(
+                by_provider.get(r["provider"], 0.0) + saved, 6)
+        return {
+            "currency": "CNY",
+            "total": round(total, 6),
+            "by_provider": by_provider,
+            "unpriced": unpriced,
+            "assumption": "空闲时段单价；高峰≈2×；输出价与缓存无关；未配置单价的 provider 不计入",
+        }
+
     def timeseries(self, days: int = 14) -> list[dict]:
         since = time.time() - days * 86400
         return self._query(

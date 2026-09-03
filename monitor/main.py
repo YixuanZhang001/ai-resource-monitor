@@ -403,7 +403,20 @@ async def request_stream():
 
 @app.get("/api/overview")
 def api_overview(range: str = Query("all")):
-    return store.analytics_overview(store.parse_range(range))
+    since = store.parse_range(range)
+    ov = store.analytics_overview(since)
+    pricing = None
+    try:
+        if config_mgr is not None:
+            pricing = {}
+            for name, pc in config_mgr.providers.items():
+                cp = (getattr(pc, "extra", None) or {}).get("cache_pricing")
+                if cp:
+                    pricing[name] = cp
+    except Exception:
+        pricing = None
+    ov["cache_savings_estimate"] = store.cache_savings(since, pricing)
+    return ov
 
 
 @app.get("/api/analytics/cost")
