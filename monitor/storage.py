@@ -433,7 +433,8 @@ class EventStore:
                       COALESCE(SUM(input_tokens), 0) AS input_tokens,
                       COALESCE(SUM(output_tokens), 0) AS output_tokens,
                       COALESCE(SUM(total_tokens), 0) AS total_tokens,
-                      COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens
+                      COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+                      COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens
                FROM events WHERE timestamp >= ? AND event_type = 'llm_call'
                GROUP BY day ORDER BY day""",
             (since,),

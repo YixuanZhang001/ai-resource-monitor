@@ -138,6 +138,8 @@ textarea{background:var(--panel);border:1px solid var(--line);color:var(--text);
 textarea:focus{outline:none;border-color:var(--accent)}
 .hint{font-size:11px;color:var(--dim);margin-top:5px}
 .empty{padding:28px;text-align:center;color:var(--dim);border:1px dashed var(--line);border-radius:12px;font-size:13px;background:var(--panel)}
+.chart-wrap{position:relative;height:260px;margin-top:4px}
+.chart-wrap canvas{max-width:100%}
 </style>
 </head>
 <body>
@@ -170,6 +172,18 @@ textarea:focus{outline:none;border-color:var(--accent)}
     <div class="sect"><div class="sect-title">COST BY PROVIDER</div><div class="panel" id="ov-provider"></div></div>
     <div class="sect"><div class="sect-title">TOKEN TREND (14D)</div><div class="trend" id="ov-trend"></div>
       <div class="legend"><span><i style="background:var(--cyan)"></i>INPUT</span><span><i style="background:var(--yellow)"></i>OUTPUT</span></div>
+    </div>
+  </div>
+  <div class="grid" style="grid-template-columns:1.35fr 1fr;gap:16px;margin-top:16px">
+    <div class="sect"><div class="sect-title">CACHE IMPACT · 每日 Token 分层</div>
+      <div class="hint2" style="margin-bottom:8px">绿=缓存命中（复用已有前缀，按命中价计费，远低于未命中）；蓝=缓存未命中输入；黄=输出。绿色占比越高，省得越多。</div>
+      <div class="chart-wrap"><canvas id="cache-bar"></canvas></div>
+      <div class="legend"><span><i style="background:#16a34a"></i>CACHE HIT 命中</span><span><i style="background:#4f46e5"></i>CACHE MISS 未命中</span><span><i style="background:#d97706"></i>OUTPUT 输出</span></div>
+    </div>
+    <div class="sect"><div class="sect-title">USAGE TREND (30D) · 总用量</div>
+      <div class="hint2" style="margin-bottom:8px">输入 / 输出 / 缓存命中随时间变化（token）。</div>
+      <div class="chart-wrap"><canvas id="usage-line"></canvas></div>
+      <div class="legend"><span><i style="background:#4f46e5"></i>INPUT</span><span><i style="background:#d97706"></i>OUTPUT</span><span><i style="background:#16a34a"></i>CACHE HIT</span></div>
     </div>
   </div>
   <div class="sect"><div class="sect-title">RECENT REQUESTS <span style="color:var(--dim);font-weight:400;font-size:10px">last 20 events · distinct from the historical aggregate above</span></div>
@@ -337,6 +351,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
   </div>
 </div></div>
 
+<script src="vendor/chart.umd.min.js"></script>
 <script>
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const API='/api';
@@ -365,16 +380,50 @@ window.addEventListener('hashchange',route);
    不依赖今日是否发起请求）；下方 COST BY PROVIDER / TREND 同样随 RANGE。
    明确区分：上方卡片 = 历史聚合（Historical Usage）；底部 RECENT REQUESTS = 最近 20 条事件。
    成本语义：cost_by_currency 为空（= 未知）→ 显示 —，绝不显示 0 / ¥0。 */
+function renderCacheCharts(d14, d30){
+  if(typeof Chart==='undefined')return;
+  Chart.defaults.color='#6b7280';
+  Chart.defaults.borderColor='#e6e9ee';
+  Chart.defaults.font.family='inherit';
+  const C={hit:'#16a34a',miss:'#4f46e5',out:'#d97706'};
+  const kf=v=> v>=1000? Math.round(v/1000)+'k' : String(v);
+  const bar=document.getElementById('cache-bar');
+  if(bar){
+    if(window._cacheBar)window._cacheBar.destroy();
+    const labels=d14.map(r=>r.day.slice(5));
+    window._cacheBar=new Chart(bar,{type:'bar',data:{labels,datasets:[
+      {label:'CACHE HIT 命中',data:d14.map(r=>r.cache_read_tokens||0),backgroundColor:C.hit,stack:'s'},
+      {label:'CACHE MISS 未命中',data:d14.map(r=>Math.max(0,(r.input_tokens||0)-(r.cache_read_tokens||0))),backgroundColor:C.miss,stack:'s'},
+      {label:'OUTPUT 输出',data:d14.map(r=>r.output_tokens||0),backgroundColor:C.out,stack:'s'}]},
+      options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+        scales:{x:{stacked:true,grid:{display:false}},y:{stacked:true,grid:{color:'#e6e9ee'},ticks:{callback:kf}}},
+        plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.dataset.label+': '+fmt.n(c.parsed.y)+' tok'}}}}});
+  }
+  const line=document.getElementById('usage-line');
+  if(line){
+    if(window._usageLine)window._usageLine.destroy();
+    const labels=d30.map(r=>r.day.slice(5));
+    window._usageLine=new Chart(line,{type:'line',data:{labels,datasets:[
+      {label:'INPUT',data:d30.map(r=>r.input_tokens||0),borderColor:C.miss,backgroundColor:C.miss,tension:.3,pointRadius:0},
+      {label:'OUTPUT',data:d30.map(r=>r.output_tokens||0),borderColor:C.out,backgroundColor:C.out,tension:.3,pointRadius:0},
+      {label:'CACHE HIT',data:d30.map(r=>r.cache_read_tokens||0),borderColor:C.hit,backgroundColor:C.hit,tension:.3,pointRadius:0}]},
+      options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+        scales:{x:{grid:{display:false}},y:{grid:{color:'#e6e9ee'},ticks:{callback:kf}}},
+        plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.dataset.label+': '+fmt.n(c.parsed.y)+' tok'}}}}});
+  }
+}
+
 async function renderOverview(){
   const rangeLabel={all:'ALL-TIME',today:'TODAY','7d':'LAST 7D','30d':'LAST 30D'}[RANGE]||RANGE.toUpperCase();
   $('#ov-title').textContent='OVERVIEW · 历史用量 · '+rangeLabel;
-  const [ov,resU,prov,trend,ev,resSt]=await Promise.all([
+  const [ov,resU,prov,trend,ev,resSt,trend30]=await Promise.all([
     get('/overview'),                         // 全局 RANGE（默认 all = 全量历史）
     get('/resources/usage'),
     get('/analytics/cost',{dim:'provider'}),
     get('/analytics/tokens/timeseries',{days:14}),
     get('/events',{limit:20}),
-    get('/resources/state')]);
+    get('/resources/state'),
+    get('/analytics/tokens/timeseries',{days:30})]);
   const totalRes=(resU.resources||[]).length;
   const totalReq=ov.requests||0;
   const costObj=ov.cost_by_currency||{};
@@ -442,6 +491,7 @@ async function renderOverview(){
   $('#ov-trend').innerHTML=tr.length?tr.slice(-14).map(r=>`<div class="col" title="${r.day}"><div class="cb" style="height:${((r.input_tokens||0)/tmax*100).toFixed(1)}%"></div><div class="cb out" style="height:${((r.output_tokens||0)/tmax*100).toFixed(1)}%"></div><div class="cd">${r.day.slice(5)}</div></div>`).join('')
     :'<div class="empty" style="margin:auto">NO DATA<br><span style="color:var(--dim);font-size:11px">No AI requests recorded yet.</span></div>';
   renderRecentEvents(ev.events||[]);
+  renderCacheCharts(trend.rows||[], trend30.rows||[]);
 }
 
 /* ── Recent Events（独立区块；数据源 /api/events，含 resource_id）──
