@@ -385,7 +385,7 @@ async function renderOverview(){
     : '—';                                  // NULL cost → —（不伪造 0）
   // 成本单位统一为「每百万 token」：按币种分别算 /1M（token 各自独立，不跨币种求和）。
   const costPer1M=costCur.length
-    ? costCur.map(c=>{const t=costTok[c]; return t?fmtPer1M(costObj[c],t,c):null;}).filter(Boolean).join(' + ')
+    ? (costCur.map(c=>{const t=costTok[c]; return t?fmtPer1M(costObj[c],t,c):null;}).filter(Boolean).join(' + ') || cost)
     : '—';
   const errs=ov.errors||0;
   // REMAINING：各 Resource 最近一次成功观察到的余额（剩余额度）。
@@ -458,7 +458,7 @@ function renderRecentEvents(events){
       <td>${esc(r.provider||'—')}</td>
       <td class="mono">${esc(r.model||'—')}</td>
       <td class="num">${fmt.n(r.total_tokens)}</td>
-      <td class="num">${r.cost==null?'-':fmt.money(r.cost,r.currency)+Number(r.cost).toFixed(4)${r.total_tokens?(' <span style="color:var(--dim)">'+fmtPer1M(r.cost,r.total_tokens,r.currency)+'</span>'):''}</td>
+      <td class="num">${r.cost==null?'-':fmt.money(r.cost,r.currency)+Number(r.cost).toFixed(4)+(r.total_tokens?(' <span style="color:var(--dim)">'+fmtPer1M(r.cost,r.total_tokens,r.currency)+'</span>'):'')}</td>
       <td class="num">${fmt.ms(r.latency_ms)}</td>
       <td><span class="badge ${st}">${statusTxt}</span></td></tr>`;
   }).join('')||'<tr><td colspan="8"><div class="empty">NO RECENT EVENTS<br><span style="color:var(--dim);font-size:11px">No AI requests recorded yet.</span></div></td></tr>';
@@ -951,7 +951,7 @@ async function showResourceDetail(id){
   const recent=(d.recent||[]).map(x=>`<tr><td class="mono">${fmt.time(x.timestamp)}</td><td class="mono">${esc(x.model)}</td>
     <td>${esc(x.project||'—')}</td><td>${esc(x.source||'—')}</td><td class="num">${fmt.n(x.total_tokens)}</td>
     <td class="num">${fmt.n(x.cache_read_tokens)}</td><td class="num">${fmt.n(x.cache_write_tokens)}</td>
-    <td class="num">${x.cost==null?'N/A':fmt.money(x.cost,x.currency)+Number(x.cost).toFixed(4)${x.total_tokens?(' <span style="color:var(--dim)">'+fmtPer1M(x.cost,x.total_tokens,x.currency)+'</span>'):''}</td>
+    <td class="num">${x.cost==null?'N/A':fmt.money(x.cost,x.currency)+Number(x.cost).toFixed(4)+(x.total_tokens?(' <span style="color:var(--dim)">'+fmtPer1M(x.cost,x.total_tokens,x.currency)+'</span>'):'')}</td>
     <td class="num">${fmt.ms(x.latency_ms)}</td>
     <td><span class="badge ${x.status_code>=400?'err':'ok'}">${x.status_code}</span></td></tr>`).join('')
     ||'<tr><td colspan="9"><div class="empty">NO USAGE</div></td></tr>';
