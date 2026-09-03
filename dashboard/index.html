@@ -580,7 +580,7 @@ async function renderOverview(){
         ? Object.entries(cse.by_currency).map(([c,v])=>fmt.money(v,c)+Number(v).toFixed(4)).join(' + ')
         : '—');
   let savingsNote;
-  if(cse.total>0){ savingsNote='估算 · '+(cse.assumption||''); }
+  if(cse.total>0){ savingsNote='累计估算（非每日支出） · '+(cse.assumption||''); }
   else if((cse.unpriced||[]).length){ savingsNote='有缓存命中但 '+((cse.unpriced||[]).join('/'))+' 未配置单价（config 加 cache_pricing 即计）'; }
   else { savingsNote='无缓存命中数据'; }
   const errs=ov.errors||0;
@@ -621,7 +621,7 @@ async function renderOverview(){
       [ ov.cache_read_ratio!=null?('读命中 '+fmt.pct(ov.cache_read_ratio)):'',
         ov.cache_coverage!=null?('覆盖 '+fmt.pct(ov.cache_coverage)+' · '+fmt.n(ov.cache_observable)+'/'+fmt.n(totalReq)):''
       ].filter(Boolean).join(' · ')),
-    card('CACHE SAVINGS',savingsTxt,'v-green',savingsNote),
+    card('CACHE SAVINGS · 累计',savingsTxt,'v-green',savingsNote),
     card('ERRORS',fmt.n(errs),errs>0?'v-red':'v-green',''),
     card('COST',costPer1M,costPer1M==='—'?'v-dim':'', costCur.length?('合计 '+cost):''),
     card('REMAINING',remaining,remaining==='—'?'v-dim':'v-green',
