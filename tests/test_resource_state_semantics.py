@@ -73,10 +73,12 @@ def _events(m, resource_id, status_code=200, n=10, age=100.0):
         m.store.insert(e)
 
 
-def _observe(m, resource_id, status="error", observed_at=None, error="credential unavailable"):
+def _observe(m, resource_id, status="error", observed_at=None, error="credential unavailable",
+             metadata=None, balance=None):
     m.store.insert_observation(ResourceObservation(
         resource_id=resource_id, status=status, source="scheduler",
-        error=error, observed_at=observed_at if observed_at is not None else time.time()))
+        error=error, balance=balance, metadata=metadata,
+        observed_at=observed_at if observed_at is not None else time.time()))
 
 
 def _state_for(c, resource_id):
@@ -161,3 +163,23 @@ def test_observation_four_state_contract_preserved(app):
     d = c.get("/api/resources/state").json()
     assert all("health" in r for r in d["resources"]), "每个 resource 都应带 health"
     assert all("stale" in r for r in d["resources"]), "每个 resource 都应带 stale"
+
+
+# 6. 余额币种来自 observation metadata（面板要显示"剩余额度"，必须知道币种）
+def test_balance_currency_from_metadata(app):
+    c, m = app
+    _observe(m, "sem-res", status="known", error=None, balance=45.93,
+             metadata={"provider": "deepseek", "currency": "CNY",
+                       "is_available": True})
+    s = _state_for(c, "sem-res")
+    assert s["balance"] == 45.93
+    assert s["currency"] == "CNY"
+
+
+# 7. 无 metadata → currency=None：绝不按 provider 猜测币种（跨币种不可求和）
+def test_balance_currency_none_when_metadata_missing(app):
+    c, m = app
+    _observe(m, "sem-res", status="known", error=None, balance=10.0)
+    s = _state_for(c, "sem-res")
+    assert s["balance"] == 10.0
+    assert s["currency"] is None, "无 metadata 时不得猜测币种"

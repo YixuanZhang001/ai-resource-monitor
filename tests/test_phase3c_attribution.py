@@ -288,7 +288,7 @@ def test_15_resource_efficiency_present():
     _seed(s, "R1", n=2, cost=0.01)
     rows = {r["name"]: r for r in s.efficiency_by_dim("resource_id")}
     assert "R1" in rows
-    assert rows["R1"]["cost_by_currency"]["CNY"]["cost_per_1k_tokens"] is not None
+    assert rows["R1"]["cost_by_currency"]["CNY"]["cost_per_1m_tokens"] is not None
 
 
 def test_16_null_cost_excluded():

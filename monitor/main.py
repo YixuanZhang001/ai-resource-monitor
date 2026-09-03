@@ -805,12 +805,30 @@ def get_resource(resource_id: str):
 #       error = 本应能观察但失败。绝不猜测、绝不把 cost 当 balance。
 
 
+def _obs_currency(obs: Optional[dict]) -> Optional[str]:
+    """快照金额（balance）的币种，来自 collector 写入的 metadata.currency。
+    取不到就返回 None —— 绝不按 provider 猜测币种（跨币种不可求和）。"""
+    if not obs:
+        return None
+    raw = obs.get("metadata")
+    if not raw:
+        return None
+    try:
+        meta = json.loads(raw) if isinstance(raw, str) else raw
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(meta, dict):
+        return None
+    cur = meta.get("currency")
+    return cur if isinstance(cur, str) and cur else None
+
+
 def _state_view(obs: Optional[dict]) -> dict:
     if obs is None:
         return {"observation_status": "no_observation", "balance": None,
                 "quota": None, "remaining": None, "reset_at": None,
                 "expires_at": None, "source": None, "error": None,
-                "observed_at": None}
+                "observed_at": None, "currency": None}
     return {
         "observation_status": obs["status"],
         "observed_at": obs["observed_at"],
@@ -818,6 +836,7 @@ def _state_view(obs: Optional[dict]) -> dict:
         "remaining": obs["remaining"], "reset_at": obs["reset_at"],
         "expires_at": obs["expires_at"], "source": obs["source"],
         "error": obs["error"],
+        "currency": _obs_currency(obs),
     }
 
 

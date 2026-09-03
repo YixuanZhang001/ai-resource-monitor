@@ -828,14 +828,16 @@ class EventStore:
                 cov = (priced / requests) if requests else None
                 cpr = (known / priced) if (known is not None and priced) \
                     else None
-                cp1k = (known / (ptok / 1000.0)) \
+                # 计数单位：每 100 万 token（industry standard）。
+                # 与 pricing_data.yaml 的 unit: per_1m_tokens 对齐（旧 cost_per_1k_tokens 已废弃）。
+                cp1m = (known / (ptok / 1_000_000.0)) \
                     if (known is not None and ptok) else None
                 cost_block[cur] = {
                     "known_cost": known,
                     "priced_requests": priced,
                     "cost_coverage": EventStore._r(cov, 4),
                     "cost_per_request": EventStore._r(cpr),
-                    "cost_per_1k_tokens": EventStore._r(cp1k),
+                    "cost_per_1m_tokens": EventStore._r(cp1m, 4),
                 }
 
             lat = lat_by_name.get(name, {}) or {}

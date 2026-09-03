@@ -13,7 +13,7 @@
 8. Provider 聚合正确
 9. Model 聚合正确
 10. cost/request
-11. cost/1K tokens
+11. cost/1M tokens
 12. tokens/request
 13. error rate
 14. latency (avg/p50/p95)
@@ -114,7 +114,7 @@ def test_failed_request_not_counted_as_normal_cost(store):
 
 # ---------------- 成本比率 ----------------
 
-def test_cost_per_request_and_per_1k(store):
+def test_cost_per_request_and_per_1m(store):
     # openai: R1 cost=0.30(150 tok), R3 cost=0.50(200 tok), R6 cost=1.0 CNY
     # R2 cost=NULL（不计入）
     _ev(store, provider="openai", model="gpt-4", resource_id="r1",
@@ -133,8 +133,8 @@ def test_cost_per_request_and_per_1k(store):
     assert usd["cost_coverage"] == 0.5  # 2/4
     assert usd["known_cost"] == 0.80
     assert usd["cost_per_request"] == 0.40       # 0.80/2
-    # priced_total_tokens = 150 + 200 = 350 -> 0.35 K
-    assert usd["cost_per_1k_tokens"] == pytest.approx(0.80 / 0.35, rel=1e-3)
+    # priced_total_tokens = 150 + 200 = 350 -> 0.00035 M
+    assert usd["cost_per_1m_tokens"] == pytest.approx(0.80 / 0.00035, rel=1e-3)
     # 多货币分离：CNY 独立
     cny = oai["cost_by_currency"]["CNY"]
     assert cny["known_cost"] == 1.0

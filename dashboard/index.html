@@ -40,9 +40,15 @@ main{max-width:1200px;margin:0 auto;padding:24px}
 .sect-title{font-size:12px;font-weight:600;letter-spacing:.04em;color:var(--dim);margin-bottom:10px;text-transform:uppercase}
 .grid{display:grid;gap:14px}
 .cards{grid-template-columns:repeat(auto-fit,minmax(160px,1fr))}
-.card,.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+.card,.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;box-shadow:0 1px 2px rgba(16,24,40,.04);min-width:0}
 .card .lb{font-size:11px;letter-spacing:.06em;color:var(--dim);text-transform:uppercase;font-weight:600}
-.card .vl{font-size:24px;font-weight:650;color:var(--bright);margin-top:6px;white-space:nowrap;font-variant-numeric:tabular-nums}
+/* 数值可能很长（多币种成本 "¥1.2340 + $0.5000"）：允许在盒内换行，绝不溢出卡片 */
+.card .vl{font-size:24px;font-weight:650;color:var(--bright);margin-top:6px;line-height:1.25;font-variant-numeric:tabular-nums;overflow-wrap:break-word}
+/* 长值（如多币种成本 "¥1.2340 + $0.5000"）自动降号，保证盒内完整显示 */
+.card .vl.lg{font-size:15px;line-height:1.35}
+/* 余额行：Resource 剩余额度（同一卡片内与用量指标区分开） */
+.card .bal{font-size:18px;font-weight:650;margin-top:2px;font-variant-numeric:tabular-nums}
+.card .bal small{font-size:10px;color:var(--dim);font-weight:500;letter-spacing:.04em}
 .card .vl small{font-size:12px;color:var(--dim);font-weight:500}
 .card .sub{font-size:11px;color:var(--dim);margin-top:4px}
 .v-green{color:var(--green)} .v-yellow{color:var(--yellow)} .v-red{color:var(--red)} .v-cyan{color:var(--accent)} .v-dim{color:var(--dim)}
@@ -240,11 +246,12 @@ textarea:focus{outline:none;border-color:var(--accent)}
     <div class="sect"><div class="sect-title">RESOURCES · AI Resource Inventory
       <span style="float:right"><button class="save-btn" id="res-add" style="border-color:var(--green);color:var(--green)">+ ADD RESOURCE</button></span>
     </div>
+      <div id="res-obs-note"></div>
       <div class="grid cards" id="res-cards"></div>
     </div>
     <div class="sect"><div class="sect-title">RESOURCE INVENTORY</div>
       <div style="overflow-x:auto"><table>
-        <thead><tr><th>Resource</th><th>Provider</th><th>Type</th><th>Mode</th><th class="num">Requests</th><th class="num">Tokens</th><th class="num">Cache</th><th class="num">Errors</th><th class="num">Avg Latency</th><th class="num">Err%</th><th class="num">Tok/Req</th><th class="num">Cost/1K</th><th>Health</th><th>Cost</th><th>Status</th><th class="num">Balance</th><th class="num">Quota</th><th class="num">Remaining</th><th>Obs</th><th>Last Obs</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Resource</th><th>Provider</th><th>Type</th><th>Mode</th><th class="num">Requests</th><th class="num">Tokens</th><th class="num">Cache</th><th class="num">Errors</th><th class="num">Avg Latency</th><th class="num">Err%</th><th class="num">Tok/Req</th><th class="num">Cost/1M</th><th>Health</th><th>Cost</th><th>Status</th><th class="num">Balance</th><th class="num">Quota</th><th class="num">Remaining</th><th>Obs</th><th>Last Obs</th><th>Actions</th></tr></thead>
         <tbody id="res-body"></tbody>
       </table></div>
     <div id="res-cur-note" class="hint2" style="margin-top:6px;color:var(--yellow)"></div>
@@ -360,12 +367,13 @@ window.addEventListener('hashchange',route);
 async function renderOverview(){
   const rangeLabel={all:'ALL-TIME',today:'TODAY','7d':'LAST 7D','30d':'LAST 30D'}[RANGE]||RANGE.toUpperCase();
   $('#ov-title').textContent='OVERVIEW · 历史用量 · '+rangeLabel;
-  const [ov,resU,prov,trend,ev]=await Promise.all([
+  const [ov,resU,prov,trend,ev,resSt]=await Promise.all([
     get('/overview'),                         // 全局 RANGE（默认 all = 全量历史）
     get('/resources/usage'),
     get('/analytics/cost',{dim:'provider'}),
     get('/analytics/tokens/timeseries',{days:14}),
-    get('/events',{limit:20})]);
+    get('/events',{limit:20}),
+    get('/resources/state')]);
   const totalRes=(resU.resources||[]).length;
   const totalReq=ov.requests||0;
   const costObj=ov.cost_by_currency||{};
@@ -373,8 +381,24 @@ async function renderOverview(){
     ? Object.entries(costObj).map(([c,v])=>fmt.money(v,c)+Number(v).toFixed(4)).join(' + ')
     : '—';                                  // NULL cost → —（不伪造 0）
   const errs=ov.errors||0;
+  // REMAINING：各 Resource 最近一次成功观察到的余额（剩余额度）。
+  // 刻意**不求和**：多个 Resource 可能指向同一个物理账号（同 key），
+  // 相加会重复计数、虚增可用额度。改为并列展示并在 sub 标明来源 Resource。
+  // 只取 observation_status='known' 且 balance 非 NULL 的；无币种 → 不猜符号。
+  const balParts=[];
+  (resSt&&resSt.resources||[]).forEach(s=>{
+    if(s.observation_status!=='known'||s.balance==null)return;
+    const c=s.currency||'';
+    balParts.push({rid:s.resource_id,
+                   txt:(c==='USD'?'$':(c==='CNY'?'¥':''))+Number(s.balance).toFixed(2),
+                   stale:!!s.stale});
+  });
+  const balStale=balParts.filter(b=>b.stale).map(b=>b.rid);
+  const remaining=balParts.length?balParts.map(b=>b.txt).join(' + '):'—';
   $('#ov-empty').style.display = totalReq ? 'none' : 'block';
-  const card=(lb,vl,cl,sub)=>`<div class="card"><div class="lb">${lb}</div><div class="vl ${cl||''}">${vl}</div>${sub?`<div class="sub">${sub}</div>`:''}</div>`;
+  // 长值（多币种成本拼接后可达 20+ 字符）自动加 .lg 降号，避免 24px 撑破卡片
+  const card=(lb,vl,cl,sub)=>{const long=String(vl).replace(/<[^>]*>/g,'').length>12;
+    return `<div class="card"><div class="lb">${lb}</div><div class="vl ${cl||''}${long?' lg':''}">${vl}</div>${sub?`<div class="sub">${sub}</div>`:''}</div>`;};
   $('#ov-cards').innerHTML=[
     card('RESOURCES',fmt.n(totalRes),'',''),
     card('REQUESTS',fmt.n(totalReq),'',''),
@@ -391,6 +415,11 @@ async function renderOverview(){
       ].filter(Boolean).join(' · ')),
     card('ERRORS',fmt.n(errs),errs>0?'v-red':'v-green',''),
     card('COST',cost,cost==='—'?'v-dim':'',''),
+    card('REMAINING',remaining,remaining==='—'?'v-dim':'v-green',
+      balParts.length
+        ? esc(balParts.map(b=>b.rid).join(' + '))
+          +(balStale.length?(' · STALE: '+esc(balStale.join(', '))):'')
+        : ''),
   ].join('');
   const rows=prov.rows||[];
   const max=Math.max(1,...rows.map(r=>r.cost??0));
@@ -587,6 +616,13 @@ const costBadge=r=>{
   return `<span style="color:var(--dim)">N/A</span> <span class="badge" style="color:var(--dim)">UNUSED</span>`;
 };
 const usedBadge=r=>r.requests>0?`<span class="v-green">USED</span>`:`<span style="color:var(--dim)">UNUSED</span>`;
+/* 余额（剩余额度）：币种取自 observation metadata.currency。
+   无币种 → 只显示数字，绝不猜符号；NULL → —（NULL ≠ 0）；跨币种不求和。 */
+function balText(s){
+  if(!s||s.balance==null)return '<span style="color:var(--dim)">—</span>';
+  const c=s.currency, sym=c==='USD'?'$':(c==='CNY'?'¥':'');
+  return `<span class="${s.stale?'v-dim':'v-green'}">${sym}${Number(s.balance).toFixed(2)}</span>${c?`<small style="color:var(--dim);font-size:11px"> ${esc(c)}</small>`:''}`;
+}
 /* Observation 四态徽标：NO OBSERVATION / KNOWN / UNAVAILABLE / ERROR（NULL ≠ 0） */
 const obsBadge=s=>{
   if(!s||!s.observation_status)return `<span class="badge" style="color:var(--dim)">NO OBSERVATION</span>`;
@@ -613,14 +649,15 @@ function resStateBadge(s){
   else obs=`<span class="badge" style="color:var(--dim)">OBS: ${esc(s.observation_status)}</span>`;
   return health+' '+obs;
 }
-/* Cost / 1K tokens — per currency; NULL/empty → N/A; never 0; no FX */
+/* Cost / 1M tokens — per currency; NULL/empty → N/A; never 0; no FX.
+   单位与 pricing_data.yaml 的 unit: per_1m_tokens 一致。 */
 function fmtSmall(v){const n=Number(v);if(n===0)return '0.0000';if(Math.abs(n)>=0.01)return n.toFixed(4);if(Math.abs(n)>=0.0001)return n.toFixed(6);return n.toExponential(2);}
-function cost1kHTML(effRow){
+function costPerTokHTML(effRow){
   if(!effRow)return '<span style="color:var(--dim)">N/A</span>';
   const c=effRow.cost_by_currency||{};
   const keys=Object.keys(c);
   if(!keys.length)return '<span style="color:var(--dim)">N/A</span>';
-  return keys.map(k=>{const v=c[k].cost_per_1k_tokens;
+  return keys.map(k=>{const v=c[k].cost_per_1m_tokens;
     return v==null?`<span style="color:var(--dim)">${esc(k)} N/A</span>`
       :`<span style="${k==='USD'?'color:var(--cyan)':'color:var(--green)'}">${fmt.money(0,k)}${fmtSmall(v)}</span>`;
   }).join(' · ');
@@ -665,7 +702,7 @@ function buildComparison(id, hBadge){
   if(!all.length)return '';
   const rowFor=rid=>{
     const e=EFF[rid];
-    const c1k=e?cost1kHTML(e):'<span style="color:var(--dim)">N/A</span>';
+    const c1k=e?costPerTokHTML(e):'<span style="color:var(--dim)">N/A</span>';
     const tpr=(e&&e.tokens&&e.tokens.tokens_per_request!=null)?e.tokens.tokens_per_request.toFixed(1):'—';
     const er=(e&&e.error_rate!=null)?fmt.pct(e.error_rate):'—';
     const lat=(e&&e.latency&&e.latency.avg_latency_ms!=null)?fmt.ms(e.latency.avg_latency_ms):'—';
@@ -673,14 +710,14 @@ function buildComparison(id, hBadge){
   };
   const ordered=[id,...all.filter(k=>k!==id)];
   return `<div class="sect-title" style="margin-top:12px">COMPARISON <span style="color:var(--dim);font-weight:400;font-size:10px">cost comparable only within same currency · no FX</span></div>
-    <div style="overflow-x:auto"><table><thead><tr><th>Resource</th><th class="num">Cost/1K</th><th class="num">Tok/Req</th><th class="num">Err%</th><th class="num">Avg Lat</th><th>Health</th></tr></thead><tbody>
+    <div style="overflow-x:auto"><table><thead><tr><th>Resource</th><th class="num">Cost/1M</th><th class="num">Tok/Req</th><th class="num">Err%</th><th class="num">Avg Lat</th><th>Health</th></tr></thead><tbody>
     ${ordered.map(rowFor).join('')}
     </tbody></table></div>
     <div class="hint2">Health verdict shown only for the opened resource (authoritative /health); open others' detail for theirs. Cross-currency cost not comparable.</div>`;
 }
 async function renderResources(){
-  let d, st, effResp;
-  try{ [d, st, effResp]=await Promise.all([get('/resources/usage'), get('/resources/state'), get('/efficiency/by_dim',{dim:'resource_id'})]); }catch(e){
+  let d, st, effResp, sc;
+  try{ [d, st, effResp, sc]=await Promise.all([get('/resources/usage'), get('/resources/state'), get('/efficiency/by_dim',{dim:'resource_id'}), get('/scheduler/status')]); }catch(e){
     $('#res-cards').innerHTML='<div class="empty" style="margin:auto">RESOURCE DATA UNAVAILABLE<br><span style="color:var(--dim);font-size:11px">'+esc(e.message)+'</span></div>';
     $('#res-body').innerHTML='';$('#res-unatt').innerHTML='';$('#res-unreg').innerHTML='';return;
   }
@@ -691,11 +728,17 @@ async function renderResources(){
   const curSet=new Set(); Object.values(effMap).forEach(e=>{ const c=e.cost_by_currency||{}; Object.keys(c).forEach(k=>curSet.add(k)); });
   const multiCur=curSet.size>1;
   const num=v=>v===null||v===undefined?'—':fmt.n(v);   // NULL observation 数值 → —（绝不 0）
-  $('#res-cards').innerHTML=rs.map(r=>`<div class="card res-card" data-res="${esc(r.resource_id)}" style="cursor:pointer">
+  // Observation 冻结告警：scheduler 关闭 → 下方 Obs / Balance 只是历史快照，永不刷新。
+  // 不这样提示，用户会把冻结的 error 快照误读成"这个 Resource 现在是坏的"。
+  $('#res-obs-note').innerHTML = (sc && sc.enabled) ? '' :
+    `<div class="hint2" style="margin-bottom:10px;color:var(--yellow);border-left:2px solid var(--yellow);padding-left:8px">OBSERVATION SCHEDULER DISABLED — 下方 Obs / Balance 是最后一次采集的冻结快照，不会自动刷新（若期间修好了凭据也不会更新）。需在 data/config.yaml 设置 scheduler.enabled: true 并重启服务。</div>`;
+  $('#res-cards').innerHTML=rs.map(r=>{const s=states[r.resource_id]||{};
+    return `<div class="card res-card" data-res="${esc(r.resource_id)}" style="cursor:pointer">
     <div class="lb">${esc(r.resource_id)}${r.enabled===false?' <span style="color:var(--yellow)">[DISABLED]</span>':''}</div>
     <div class="vl" style="font-size:14px">${esc(r.resource_name||r.resource_id)}</div>
-    <div class="sub">${esc(r.resource_type||'?')} · ${esc(r.billing_mode||'?')} · ${usedBadge(r)} · ${resStateBadge(states[r.resource_id])}</div>
-  </div>`).join('')||'<div class="empty" style="margin:auto">NO RESOURCES CONFIGURED<br><span style="color:var(--dim);font-size:11px">点击右上角 + ADD RESOURCE 创建</span></div>';
+    <div class="bal" title="最近一次成功观察到的剩余额度">${balText(s)} <small>BALANCE${s.stale?' · STALE':''}</small></div>
+    <div class="sub">${esc(r.resource_type||'?')} · ${esc(r.billing_mode||'?')} · ${usedBadge(r)} · ${resStateBadge(s)}</div>
+  </div>`;}).join('')||'<div class="empty" style="margin:auto">NO RESOURCES CONFIGURED<br><span style="color:var(--dim);font-size:11px">点击右上角 + ADD RESOURCE 创建</span></div>';
   $('#res-body').innerHTML=rs.map(r=>{const s=states[r.resource_id]||{};
     return `<tr class="row-click" data-res="${esc(r.resource_id)}">
     <td><div>${esc(r.resource_name||r.resource_id)}</div><div class="mono" style="font-size:10px">${esc(r.resource_id)}</div></td>
@@ -705,7 +748,7 @@ async function renderResources(){
     <td class="num">${fmt.ms(r.avg_latency_ms)}</td>
     <td class="num">${r.requests>0?fmt.pct(r.error_count/r.requests):'—'}</td>
     <td class="num">${r.requests>0?(r.total_tokens/r.requests).toFixed(1):'—'}</td>
-    <td class="num">${cost1kHTML(effMap[r.resource_id])}</td>
+    <td class="num">${costPerTokHTML(effMap[r.resource_id])}</td>
     <td>${healthInd(r)}</td>
     <td>${costBadge(r)}</td>
     <td>${usedBadge(r)}${r.enabled===false?' <span style="color:var(--yellow);font-size:10px">DISABLED</span>':''}</td>
