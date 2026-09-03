@@ -226,7 +226,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
     </div>
     <div class="sect"><div class="sect-title">INPUT / OUTPUT TREND</div>
       <div class="trend" id="token-trend" style="height:160px"></div>
-      <div class="legend"><span><i style="background:var(--cyan)"></i>INPUT</span><span><i style="background:var(--yellow)"></i>OUTPUT</span></div>
+      <div class="legend"><span><i style="background:var(--cyan)"></i>INPUT</span><span><i style="background:var(--yellow)"></i>OUTPUT</span><span><i style="background:var(--green)"></i>CACHE HIT</span></div>
     </div>
   </section>
 
@@ -252,7 +252,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
     </div>
     <div class="sect"><div class="sect-title">RESOURCE INVENTORY</div>
       <div style="overflow-x:auto"><table>
-        <thead><tr><th>Resource</th><th>Provider</th><th>Type</th><th>Mode</th><th class="num">Requests</th><th class="num">Tokens</th><th class="num">Cache</th><th class="num">Errors</th><th class="num">Avg Latency</th><th class="num">Err%</th><th class="num">Tok/Req</th><th class="num">Cost/1M</th><th>Health</th><th>Cost</th><th>Status</th><th class="num">Balance</th><th class="num">Quota</th><th class="num">Remaining</th><th>Obs</th><th>Last Obs</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Resource</th><th>Provider</th><th>Type</th><th>Mode</th><th class="num">Requests</th><th class="num">Tokens</th><th class="num">Cache R</th><th class="num">Cache W</th><th class="num">Errors</th><th class="num">Avg Latency</th><th class="num">Err%</th><th class="num">Tok/Req</th><th class="num">Cost/1M</th><th>Health</th><th>Cost</th><th>Status</th><th class="num">Balance</th><th class="num">Quota</th><th class="num">Remaining</th><th>Obs</th><th>Last Obs</th><th>Actions</th></tr></thead>
         <tbody id="res-body"></tbody>
       </table></div>
     <div id="res-cur-note" class="hint2" style="margin-top:6px;color:var(--yellow)"></div>
@@ -378,9 +378,15 @@ async function renderOverview(){
   const totalRes=(resU.resources||[]).length;
   const totalReq=ov.requests||0;
   const costObj=ov.cost_by_currency||{};
+  const costTok=ov.cost_tokens_by_currency||{};
+  const costCur=Object.keys(costObj);
   const cost=Object.keys(costObj).length
     ? Object.entries(costObj).map(([c,v])=>fmt.money(v,c)+Number(v).toFixed(4)).join(' + ')
     : '—';                                  // NULL cost → —（不伪造 0）
+  // 成本单位统一为「每百万 token」：按币种分别算 /1M（token 各自独立，不跨币种求和）。
+  const costPer1M=costCur.length
+    ? costCur.map(c=>{const t=costTok[c]; return t?fmtPer1M(costObj[c],t,c):null;}).filter(Boolean).join(' + ')
+    : '—';
   const errs=ov.errors||0;
   // REMAINING：各 Resource 最近一次成功观察到的余额（剩余额度）。
   // 刻意**不求和**：多个 Resource 可能指向同一个物理账号（同 key），
@@ -420,7 +426,7 @@ async function renderOverview(){
         ov.cache_coverage!=null?('覆盖 '+fmt.pct(ov.cache_coverage)+' · '+fmt.n(ov.cache_observable)+'/'+fmt.n(totalReq)):''
       ].filter(Boolean).join(' · ')),
     card('ERRORS',fmt.n(errs),errs>0?'v-red':'v-green',''),
-    card('COST',cost,cost==='—'?'v-dim':'',''),
+    card('COST',costPer1M,costPer1M==='—'?'v-dim':'', costCur.length?('合计 '+cost):''),
     card('REMAINING',remaining,remaining==='—'?'v-dim':'v-green',
       balItems.length
         ? balItems.map(b=> b.rids.length>1 ? `${esc(b.rids.join('+'))} 共用` : esc(b.rids[0])).join(' · ')
@@ -429,7 +435,7 @@ async function renderOverview(){
   ].join('');
   const rows=prov.rows||[];
   const max=Math.max(1,...rows.map(r=>r.cost??0));
-  $('#ov-provider').innerHTML=rows.length?rows.map(r=>`<div class="bar-row"><div class="bn">${esc(r.name)}</div><div class="bar-track"><div class="bar-fill" style="width:${((r.cost??0)/max*100).toFixed(1)}%"></div></div><div class="bar-val">${fmt.money(r.cost,r.currency)}${(r.cost??0).toFixed(4)}</div></div>`).join('')
+  $('#ov-provider').innerHTML=rows.length?rows.map(r=>`<div class="bar-row"><div class="bn">${esc(r.name)}</div><div class="bar-track"><div class="bar-fill" style="width:${((r.cost??0)/max*100).toFixed(1)}%"></div></div><div class="bar-val">${fmtPer1M(r.cost,r.total_tokens,r.currency)||'—'} <span style="color:var(--dim)">${fmt.money(r.cost,r.currency)}${(r.cost??0).toFixed(4)}</span></div></div>`).join('')
     :'<div class="empty" style="margin:auto">NO DATA<br><span style="color:var(--dim);font-size:11px">No AI requests recorded yet.</span></div>';
   const tr=trend.rows||[];
   const tmax=Math.max(1,...tr.map(r=>r.total_tokens||0));
@@ -452,7 +458,7 @@ function renderRecentEvents(events){
       <td>${esc(r.provider||'—')}</td>
       <td class="mono">${esc(r.model||'—')}</td>
       <td class="num">${fmt.n(r.total_tokens)}</td>
-      <td class="num">${r.cost==null?'-':fmt.money(r.cost,r.currency)+Number(r.cost).toFixed(4)}</td>
+      <td class="num">${r.cost==null?'-':fmt.money(r.cost,r.currency)+Number(r.cost).toFixed(4)${r.total_tokens?(' <span style="color:var(--dim)">'+fmtPer1M(r.cost,r.total_tokens,r.currency)+'</span>'):''}</td>
       <td class="num">${fmt.ms(r.latency_ms)}</td>
       <td><span class="badge ${st}">${statusTxt}</span></td></tr>`;
   }).join('')||'<tr><td colspan="8"><div class="empty">NO RECENT EVENTS<br><span style="color:var(--dim);font-size:11px">No AI requests recorded yet.</span></div></td></tr>';
@@ -504,8 +510,10 @@ async function showDetail(id){
     ['Client Attr',(d.metadata&&d.metadata.client_attribution_source)||'-'],
     ['Endpoint',`<span class="mono">${esc(d.endpoint)}</span>`],
     ['Input Tokens',fmt.n(d.input_tokens)],['Output Tokens',fmt.n(d.output_tokens)],['Total Tokens',fmt.n(d.total_tokens)],
+    ['Cache Read',fmt.n(d.cache_read_tokens), d.cache_read_tokens?('命中 '+(cacheReadPct(d.cache_read_tokens,d.input_tokens)!=null?fmt.pct(cacheReadPct(d.cache_read_tokens,d.input_tokens)):'')+' input'):'未命中'],
+    ['Cache Write',fmt.n(d.cache_write_tokens), d.cache_write_tokens?'建立缓存':'—'],
     ['Latency',fmt.ms(d.latency_ms)],['Status',`<span class="${d.status_code>=400?'v-red':'v-green'}">${d.status_code}</span>`],
-    ['Est. Cost',d.cost==null?'-':fmt.money(d.cost,d.currency)+Number(d.cost).toFixed(6)],
+    ['Est. Cost',d.cost==null?'-':fmt.money(d.cost,d.currency)+Number(d.cost).toFixed(6)+(d.total_tokens?(' · <span style="color:var(--dim)">'+fmtPer1M(d.cost,d.total_tokens,d.currency)+'</span>'):'')],
     ['Error',d.error?`<span class="v-red">${esc(d.error)}</span>`:'-'],
     ['Trace ID',d.trace_id||'-'],['Parent Span',d.parent_span_id||'-']];
   $('#detail-body').innerHTML=`<table>${rows.map(([k,v])=>`<tr><td>${k}</td><td>${v}</td></tr>`).join('')}</table>`;
@@ -531,7 +539,7 @@ async function renderCosts(){
     const per1m=r.total_tokens?(r.cost/(r.total_tokens/1e6)):null;
     return `<div class="bar-row">
     <div class="bn">${esc(r.name)}</div><div class="bar-track"><div class="bar-fill y" style="width:${((r.cost??0)/max*100).toFixed(1)}%"></div></div>
-    <div class="bar-val">${fmt.money(r.cost,cur)}${(r.cost??0).toFixed(4)} <span style="color:var(--dim)">${per1m!=null?('· '+fmt.money(per1m,cur)+per1m.toFixed(4)+'/1M'):''} · ${fmt.n(r.requests)} 次</span></div></div>`;
+    <div class="bar-val">${per1m!=null?(fmt.money(per1m,cur)+per1m.toFixed(4)+'/1M'):(fmt.money(r.cost,cur)+Number(r.cost).toFixed(4))} <span style="color:var(--dim)">${r.cost!=null?('· 合计 '+fmt.money(r.cost,cur)+Number(r.cost).toFixed(4)):''} · ${fmt.n(r.requests)} 次</span></div></div>`;
   }).join('')
     :'<div class="empty" style="margin:auto">NO COST DATA<br><span style="color:var(--dim);font-size:11px">No AI requests recorded yet.</span></div>';
 }
@@ -539,12 +547,14 @@ async function renderTokens(){
   const dim=$('#token-tabs .active').dataset.dim;
   const [d,tr]=await Promise.all([get('/analytics/tokens',{dim}),get('/analytics/tokens/timeseries',{days:14})]);
   const rows=d.rows||[],max=Math.max(1,...rows.map(r=>r.total_tokens||0));
-  $('#token-panel').innerHTML=`<table><thead><tr><th>${dim.toUpperCase()}</th><th class="num">Requests</th><th class="num">Input</th><th class="num">Output</th><th class="num">Total</th></tr></thead><tbody>`+
-    rows.map(r=>`<tr><td>${esc(r.name)}</td><td class="num">${fmt.n(r.requests)}</td><td class="num">${fmt.n(r.input_tokens)}</td><td class="num">${fmt.n(r.output_tokens)}</td><td class="num">${fmt.n(r.total_tokens)}</td></tr>`).join('')+
+  $('#token-panel').innerHTML=`<table><thead><tr><th>${dim.toUpperCase()}</th><th class="num">Requests</th><th class="num">Input</th><th class="num">Output</th><th class="num">Total</th><th class="num">Cache Read</th><th class="num">Cache Write</th><th class="num">Cache%</th></tr></thead><tbody>`+
+    rows.map(r=>{const rp=cacheReadPct(r.cache_read_tokens,r.input_tokens);
+      return `<tr><td>${esc(r.name)}</td><td class="num">${fmt.n(r.requests)}</td><td class="num">${fmt.n(r.input_tokens)}</td><td class="num">${fmt.n(r.output_tokens)}</td><td class="num">${fmt.n(r.total_tokens)}</td><td class="num" title="命中缓存（在缓存内复用的 token）">${fmt.n(r.cache_read_tokens)}</td><td class="num" title="建立缓存（本次写入的新缓存 token）">${fmt.n(r.cache_write_tokens)}</td><td class="num">${rp!=null?fmt.pct(rp):'—'}</td></tr>`;
+    }).join('')+
     (rows.length?'':'<tr><td colspan="5"><div class="empty">NO TOKEN DATA<br><span style="color:var(--dim);font-size:11px">No AI requests recorded yet.</span></div></td></tr>')+
     '</tbody></table>';
   const tmax=Math.max(1,...tr.rows.map(r=>r.total_tokens||0));
-  $('#token-trend').innerHTML=(tr.rows||[]).slice(-14).map(r=>`<div class="col" title="${r.day}"><div class="cb" style="height:${((r.input_tokens||0)/tmax*100).toFixed(1)}%"></div><div class="cb out" style="height:${((r.output_tokens||0)/tmax*100).toFixed(1)}%"></div><div class="cd">${r.day.slice(5)}</div></div>`).join('')||'<div class="empty" style="margin:auto">NO DATA<br><span style="color:var(--dim);font-size:11px">No AI requests recorded yet.</span></div>';
+  $('#token-trend').innerHTML=(tr.rows||[]).slice(-14).map(r=>`<div class="col" title="${r.day}"><div class="cb" style="height:${((r.input_tokens||0)/tmax*100).toFixed(1)}%"></div><div class="cb out" style="height:${((r.output_tokens||0)/tmax*100).toFixed(1)}%"></div><div class="cb" style="height:${((r.cache_read_tokens||0)/tmax*100).toFixed(1)}%;background:var(--green)" title="缓存命中 token"></div><div class="cd">${r.day.slice(5)}</div></div>`).join('')||'<div class="empty" style="margin:auto">NO DATA<br><span style="color:var(--dim);font-size:11px">No AI requests recorded yet.</span></div>';
 }
 
 /* ── Performance ── */
@@ -619,8 +629,8 @@ const costBadge=r=>{
   const amt=costAmount(r);
   const mixed=r.mixed_currency
     ?' <span class="badge" style="color:var(--yellow);border-color:#5a4a1d">MULTI-CURRENCY</span>':'';
-  if(r.cost_status==='known')return `<span class="v-green">${amt}</span>${mixed||' <span class="badge ok">KNOWN</span>'}`;
-  if(r.cost_status==='mixed')return `<span class="v-yellow">${amt}</span>${mixed||' <span class="badge" style="color:var(--yellow);border-color:#5a4a1d">MIXED</span>'}`;
+  if(r.cost_status==='known')return `<span class="v-green">${amt}</span>${costWith1M(r)}${mixed||' <span class="badge ok">KNOWN</span>'}`;
+  if(r.cost_status==='mixed')return `<span class="v-yellow">${amt}</span>${costWith1M(r)}${mixed||' <span class="badge" style="color:var(--yellow);border-color:#5a4a1d">MIXED</span>'}`;
   if(r.cost_status==='unknown')return `<span style="color:var(--dim)">N/A</span> <span class="badge" style="color:var(--yellow);border-color:#5a4a1d">UNKNOWN</span>`;
   return `<span style="color:var(--dim)">N/A</span> <span class="badge" style="color:var(--dim)">UNUSED</span>`;
 };
@@ -670,6 +680,32 @@ function costPerTokHTML(effRow){
     return v==null?`<span style="color:var(--dim)">${esc(k)} N/A</span>`
       :`<span style="${k==='USD'?'color:var(--cyan)':'color:var(--green)'}">${fmt.money(0,k)}${fmtSmall(v)}</span>`;
   }).join(' · ');
+}
+/* Cost 单位统一为「每百万 token」：cost / (total_tokens / 1e6)。
+   NULL cost 或 0 token → null（绝不伪造 0 / 绝不跨币种混合）。 */
+function fmtPer1M(cost, tokens, cur){
+  if(cost==null || !(tokens>0)) return null;
+  const sym = cur==='USD'?'$':'¥';
+  return sym + fmtSmall(cost/(tokens/1e6)) + '/1M';
+}
+/* 多币种：逐币种算 /1M（token 口径各自独立，不求和）。 */
+function fmtPer1MAny(costObj, tokObj){
+  const curs=Object.keys(costObj||{});
+  if(!curs.length) return null;
+  const parts=curs.map(c=>{const t=(tokObj&&tokObj[c])||0; return t?fmtPer1M(costObj[c], t, c):null;}).filter(Boolean);
+  return parts.length?parts.join(' + '):null;
+}
+/* Resource 成本徽标里的 /1M 后缀：仅单币种且 token>0 时显示（多币种口径不清则不标）。 */
+function costWith1M(r){
+  const bc=r.cost_by_currency||{}; const keys=Object.keys(bc);
+  if(keys.length!==1) return '';
+  const t=r.total_tokens; if(!(t>0)) return '';
+  return ` <span style="color:var(--dim)">${fmtPer1M(bc[keys[0]], t, keys[0])}</span>`;
+}
+/* 命中缓存占比：cache_read_tokens / input_tokens（token 级，口径自洽）。 */
+function cacheReadPct(read, input){
+  if(!(read>0) || !(input>0)) return null;
+  return read/input;
 }
 /* Inventory Health indication (NOT authoritative): pure error-presence signal.
    Authoritative 4-state verdict comes only from /health in the Detail. */
@@ -759,8 +795,8 @@ async function renderResources(){
     return `<tr class="row-click" data-res="${esc(r.resource_id)}">
     <td><div>${esc(r.resource_name||r.resource_id)}</div><div class="mono" style="font-size:10px">${esc(r.resource_id)}</div></td>
     <td>${esc(r.provider||'—')}</td><td>${esc(r.resource_type||'—')}</td><td>${esc(r.billing_mode||'—')}</td>
-    <td class="num">${fmt.n(r.requests)}</td><td class="num">${fmt.n(r.total_tokens)}</td>
-    <td class="num">${fmt.n(r.cache_read_tokens)}</td><td class="num">${fmt.n(r.error_count)}</td>
+    <td class="num">${fmt.n(r.requests)}</td>    <td class="num">${fmt.n(r.total_tokens)}</td>
+    <td class="num">${fmt.n(r.cache_read_tokens)}</td><td class="num">${fmt.n(r.cache_write_tokens)}</td><td class="num">${fmt.n(r.error_count)}</td>
     <td class="num">${fmt.ms(r.avg_latency_ms)}</td>
     <td class="num">${r.requests>0?fmt.pct(r.error_count/r.requests):'—'}</td>
     <td class="num">${r.requests>0?(r.total_tokens/r.requests).toFixed(1):'—'}</td>
@@ -903,20 +939,22 @@ async function showResourceDetail(id){
     ['PROVIDER',esc(r.provider||'—')],['TYPE',esc(r.resource_type||'—')],
     ['BILLING MODE',esc(r.billing_mode||'—')],['REQUESTS',fmt.n(r.requests)],
     ['TOKENS',`IN ${fmt.n(r.input_tokens)} · OUT ${fmt.n(r.output_tokens)} · TOTAL ${fmt.n(r.total_tokens)}`],
-    ['CACHE READ',fmt.n(r.cache_read_tokens)],['ERRORS',fmt.n(r.error_count)],
+    ['CACHE READ',fmt.n(r.cache_read_tokens)],['CACHE WRITE',fmt.n(r.cache_write_tokens)],['ERRORS',fmt.n(r.error_count)],
     ['AVG LATENCY',fmt.ms(r.avg_latency_ms)],['LAST USED',lastUsed],
     ['COST',costBadge(r)]];
-  const models=(d.models||[]).map(m=>`<tr><td class="mono">${esc(m.model)}</td><td class="num">${fmt.n(m.requests)}</td>
-    <td class="num">${fmt.n(m.total_tokens)}</td><td class="num">${fmt.n(m.cache_read_tokens)}</td>
+  const models=(d.models||[]).map(m=>{const mp1m=(m.cost_count&&m.total_tokens)?fmtPer1M(m.cost_known_sum,m.total_tokens,'CNY'):null;
+    return `<tr><td class="mono">${esc(m.model)}</td><td class="num">${fmt.n(m.requests)}</td>
+    <td class="num">${fmt.n(m.total_tokens)}</td><td class="num">${fmt.n(m.cache_read_tokens)}</td><td class="num">${fmt.n(m.cache_write_tokens)}</td>
     <td class="num">${fmt.n(m.errors)}</td><td class="num">${fmt.ms(m.avg_latency_ms)}</td>
-    <td>${m.cost_count?fmt.money(m.cost_known_sum,'CNY')+Number(m.cost_known_sum).toFixed(4):'N/A'}</td></tr>`).join('')
-    ||'<tr><td colspan="7"><div class="empty">NO USAGE</div></td></tr>';
+    <td>${m.cost_count?(fmt.money(m.cost_known_sum,'CNY')+Number(m.cost_known_sum).toFixed(4)+(mp1m?' <span style="color:var(--dim)">'+mp1m+'</span>':'')):'N/A'}</td></tr>`;}).join('')
+    ||'<tr><td colspan="8"><div class="empty">NO USAGE</div></td></tr>';
   const recent=(d.recent||[]).map(x=>`<tr><td class="mono">${fmt.time(x.timestamp)}</td><td class="mono">${esc(x.model)}</td>
     <td>${esc(x.project||'—')}</td><td>${esc(x.source||'—')}</td><td class="num">${fmt.n(x.total_tokens)}</td>
-    <td class="num">${x.cost==null?'N/A':fmt.money(x.cost,x.currency)+Number(x.cost).toFixed(4)}</td>
+    <td class="num">${fmt.n(x.cache_read_tokens)}</td><td class="num">${fmt.n(x.cache_write_tokens)}</td>
+    <td class="num">${x.cost==null?'N/A':fmt.money(x.cost,x.currency)+Number(x.cost).toFixed(4)${x.total_tokens?(' <span style="color:var(--dim)">'+fmtPer1M(x.cost,x.total_tokens,x.currency)+'</span>'):''}</td>
     <td class="num">${fmt.ms(x.latency_ms)}</td>
     <td><span class="badge ${x.status_code>=400?'err':'ok'}">${x.status_code}</span></td></tr>`).join('')
-    ||'<tr><td colspan="8"><div class="empty">NO USAGE</div></td></tr>';
+    ||'<tr><td colspan="9"><div class="empty">NO USAGE</div></td></tr>';
   const hv=hlth&&hlth.health?hlth:null;
   const hBadge=hv?({healthy:'<span class="badge ok">HEALTHY</span>',degraded:'<span class="badge" style="color:var(--yellow);border-color:#5a4a1d">DEGRADED</span>',unavailable:'<span class="badge err">UNAVAILABLE</span>',unknown:'<span class="badge" style="color:var(--dim)">UNKNOWN</span>'}[hv.health]||esc(hv.health)):'<span class="badge" style="color:var(--dim)">UNKNOWN</span>';
   const healthSec=`<div class="sect-title" style="margin-top:12px">RESOURCE HEALTH <span style="color:var(--dim);font-weight:400;font-size:10px">authoritative · from /health</span></div>
@@ -937,9 +975,9 @@ async function showResourceDetail(id){
     ${trendSec}
     ${comparisonSec}
     <div class="sect-title" style="margin-top:12px">MODEL USAGE</div>
-    <div style="overflow-x:auto"><table><thead><tr><th>Model</th><th class="num">Requests</th><th class="num">Tokens</th><th class="num">Cache</th><th class="num">Errors</th><th class="num">Latency</th><th>Cost</th></tr></thead><tbody>${models}</tbody></table></div>
+    <div style="overflow-x:auto"><table><thead><tr><th>Model</th><th class="num">Requests</th><th class="num">Tokens</th><th class="num">Cache R</th><th class="num">Cache W</th><th class="num">Errors</th><th class="num">Latency</th><th>Cost</th></tr></thead><tbody>${models}</tbody></table></div>
     <div class="sect-title" style="margin-top:12px">RECENT REQUESTS</div>
-    <div style="overflow-x:auto"><table><thead><tr><th>Time</th><th>Model</th><th>Project</th><th>Source</th><th class="num">Tokens</th><th>Cost</th><th class="num">Latency</th><th>Status</th></tr></thead><tbody>${recent}</tbody></table></div>`;
+    <div style="overflow-x:auto"><table><thead><tr><th>Time</th><th>Model</th><th>Project</th><th>Source</th><th class="num">Tokens</th><th class="num">Cache R</th><th class="num">Cache W</th><th>Cost</th><th class="num">Latency</th><th>Status</th></tr></thead><tbody>${recent}</tbody></table></div>`;
   $('#overlay').classList.add('show');
 }
 

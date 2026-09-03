@@ -364,12 +364,16 @@ class EventStore:
         cost_where = f"{where} AND cost IS NOT NULL" if where \
             else " WHERE cost IS NOT NULL"
         costs = self._query(
-            f"""SELECT currency, ROUND(SUM(cost), 6) AS cost
+            f"""SELECT currency, ROUND(SUM(cost), 6) AS cost,
+                       COALESCE(SUM(total_tokens), 0) AS tokens
                 FROM events{cost_where} GROUP BY currency""",
             params,
         )
         row["cost_by_currency"] = {c["currency"]: c["cost"]
                                    for c in costs if c["currency"]}
+        # 按币种 token（用于面板算 cost/1M；多币种分别计价，绝不跨币种汇总）
+        row["cost_tokens_by_currency"] = {c["currency"]: c["tokens"]
+                                          for c in costs if c["currency"]}
         row["error_rate"] = (row["errors"] / row["requests"]) \
             if row["requests"] else 0.0
         # 缓存指标（绝不伪造；口径必须自洽）：
@@ -412,7 +416,9 @@ class EventStore:
                        COUNT(*) AS requests,
                        COALESCE(SUM(input_tokens), 0) AS input_tokens,
                        COALESCE(SUM(output_tokens), 0) AS output_tokens,
-                       COALESCE(SUM(total_tokens), 0) AS total_tokens
+                       COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                       COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+                       COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens
                 FROM events{where}
                 GROUP BY {expr}
                 ORDER BY total_tokens DESC""",
@@ -426,7 +432,8 @@ class EventStore:
                       COUNT(*) AS requests,
                       COALESCE(SUM(input_tokens), 0) AS input_tokens,
                       COALESCE(SUM(output_tokens), 0) AS output_tokens,
-                      COALESCE(SUM(total_tokens), 0) AS total_tokens
+                      COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                      COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens
                FROM events WHERE timestamp >= ? AND event_type = 'llm_call'
                GROUP BY day ORDER BY day""",
             (since,),
@@ -589,6 +596,7 @@ class EventStore:
                        COALESCE(project, 'Unknown') AS project,
                        COALESCE(client, 'Unknown') AS client,
                        input_tokens, output_tokens, total_tokens,
+                       cache_read_tokens, cache_write_tokens, cache_hit,
                        latency_ms, status_code, cost, currency, error
                 FROM events{where}
                 ORDER BY id DESC
@@ -604,6 +612,7 @@ class EventStore:
                       COALESCE(project, 'Unknown') AS project,
                       COALESCE(client, 'Unknown') AS client,
                       input_tokens, output_tokens, total_tokens,
+                      cache_read_tokens, cache_write_tokens, cache_hit,
                       latency_ms, status_code, cost, currency,
                       error, trace_id, parent_id, metadata
                FROM events WHERE request_id = ? LIMIT 1""",
@@ -635,6 +644,7 @@ class EventStore:
                        COALESCE(SUM(output_tokens), 0) AS output_tokens,
                        COALESCE(SUM(total_tokens), 0) AS total_tokens,
                        COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+                       COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
                        SUM(CASE WHEN error IS NOT NULL OR status_code >= 400
                                 THEN 1 ELSE 0 END) AS errors,
                        COALESCE(AVG(latency_ms), 0) AS avg_latency_ms,
@@ -680,6 +690,7 @@ class EventStore:
                        COALESCE(SUM(output_tokens), 0) AS output_tokens,
                        COALESCE(SUM(total_tokens), 0) AS total_tokens,
                        COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+                       COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
                        SUM(CASE WHEN error IS NOT NULL OR status_code >= 400
                                 THEN 1 ELSE 0 END) AS errors,
                        COALESCE(AVG(latency_ms), 0) AS avg_latency_ms,
@@ -697,6 +708,7 @@ class EventStore:
             """SELECT request_id, timestamp, provider, model,
                       COALESCE(source, 'Unknown') AS source,
                       input_tokens, output_tokens, total_tokens,
+                      cache_read_tokens, cache_write_tokens,
                       latency_ms, status_code, cost, currency, error
                FROM events WHERE resource_id = ?
                ORDER BY id DESC LIMIT ?""",
