@@ -1,6 +1,6 @@
 """Test isolation（P6 审计修复：hermetic，不依赖生产 data/）。
 
-两个隔离面：
+三个隔离面：
 
 1) 数据目录
    monitor.main 在 import 期构造 EventStore(DATA_DIR/"monitor.db")。
@@ -12,6 +12,14 @@
    （如 test_credential_access）就会失败；上一轮的临时绕法是"复制生产
    data/config.yaml"，那等于让测试依赖生产数据，不是真正的隔离。
    这里显式播种一份**自包含**的测试配置，默认值与出厂配置一致。
+
+3) 网络出口（loopback 必须直连）
+   e2e 测试只与本机 127.0.0.1 上临时起的 uvicorn / 假上游通信。若从环境继承了
+   HTTP_PROXY / HTTPS_PROXY，httpx（测试客户端与 gateway 内部的 AsyncClient）
+   会把 loopback 流量也绕经代理；代理在**复用连接**上会把请求行按 absolute-form
+   （GET http://127.0.0.1:port/path）转发，Starlette 因此匹配不到任何路由，
+   返回 404 —— 表现为「同一 Client 第一次请求成功、之后全部 404」。
+   这与被测代码无关，纯属测试环境泄漏，故在此显式让 loopback 绕过代理。
 """
 import os
 import tempfile
@@ -62,7 +70,21 @@ resources:
 """
 
 
+_LOOPBACK = ("127.0.0.1", "localhost", "::1")
+
+
+def _bypass_proxy_for_loopback():
+    """把 loopback 写进 no_proxy，保证测试流量不经任何继承来的 HTTP 代理。"""
+    for var in ("no_proxy", "NO_PROXY"):
+        current = [x.strip() for x in os.environ.get(var, "").split(",") if x.strip()]
+        for host in _LOOPBACK:
+            if host not in current:
+                current.append(host)
+        os.environ[var] = ",".join(current)
+
+
 def _bootstrap():
+    _bypass_proxy_for_loopback()
     data_dir = os.environ.get("MONITOR_DATA_DIR")
     if not data_dir:
         data_dir = tempfile.mkdtemp(prefix="arm_test_")
