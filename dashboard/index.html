@@ -247,6 +247,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
       <span style="float:right"><button class="save-btn" id="res-add" style="border-color:var(--green);color:var(--green)">+ ADD RESOURCE</button></span>
     </div>
       <div id="res-obs-note"></div>
+      <div id="res-cap-note" class="hint2" style="margin-top:8px;color:var(--dim);border-left:2px solid var(--line);padding-left:8px"></div>
       <div class="grid cards" id="res-cards"></div>
     </div>
     <div class="sect"><div class="sect-title">RESOURCE INVENTORY</div>
@@ -732,12 +733,19 @@ async function renderResources(){
   // 不这样提示，用户会把冻结的 error 快照误读成"这个 Resource 现在是坏的"。
   $('#res-obs-note').innerHTML = (sc && sc.enabled) ? '' :
     `<div class="hint2" style="margin-bottom:10px;color:var(--yellow);border-left:2px solid var(--yellow);padding-left:8px">OBSERVATION SCHEDULER DISABLED — 下方 Obs / Balance 是最后一次采集的冻结快照，不会自动刷新（若期间修好了凭据也不会更新）。需在 data/config.yaml 设置 scheduler.enabled: true 并重启服务。</div>`;
+  // 真实用量捕获说明：Monitor 只记录"经网关转发"的调用；直接打到 api.deepseek.com 的调用看不到
+  // （DeepSeek 不提供用量查询接口，余额只有 2 位小数、微量使用不会变动）。把客户端 base_url 指向网关即可精确统计。
+  $('#res-cap-note').innerHTML =
+    `<b style="color:var(--dim)">如何检测您真实的 API 调用：</b> Monitor 只捕获经网关转发的请求。` +
+    `把客户端的 DeepSeek <code>base_url</code> 设为 ` +
+    `<code style="color:var(--green)">http://127.0.0.1:8787/gateway/deepseek/v1</code>` +
+    `（网关自动注入密钥并统计 token/成本）。直接请求 api.deepseek.com 的调用 Monitor 无法感知。`;
   $('#res-cards').innerHTML=rs.map(r=>{const s=states[r.resource_id]||{};
     return `<div class="card res-card" data-res="${esc(r.resource_id)}" style="cursor:pointer">
     <div class="lb">${esc(r.resource_id)}${r.enabled===false?' <span style="color:var(--yellow)">[DISABLED]</span>':''}</div>
     <div class="vl" style="font-size:14px">${esc(r.resource_name||r.resource_id)}</div>
     <div class="bal" title="最近一次成功观察到的剩余额度">${balText(s)} <small>BALANCE${s.stale?' · STALE':''}</small></div>
-    <div class="sub">${esc(r.resource_type||'?')} · ${esc(r.billing_mode||'?')} · ${usedBadge(r)} · ${resStateBadge(s)}</div>
+    <div class="sub">${esc(r.resource_type||'?')} · ${esc(r.billing_mode||'?')} · ${usedBadge(r)} · ${r.enabled===false?'<span class="badge" style="color:var(--dim)">DISABLED·未观察</span>':resStateBadge(s)}</div>
   </div>`;}).join('')||'<div class="empty" style="margin:auto">NO RESOURCES CONFIGURED<br><span style="color:var(--dim);font-size:11px">点击右上角 + ADD RESOURCE 创建</span></div>';
   $('#res-body').innerHTML=rs.map(r=>{const s=states[r.resource_id]||{};
     return `<tr class="row-click" data-res="${esc(r.resource_id)}">
@@ -753,7 +761,7 @@ async function renderResources(){
     <td>${costBadge(r)}</td>
     <td>${usedBadge(r)}${r.enabled===false?' <span style="color:var(--yellow);font-size:10px">DISABLED</span>':''}</td>
     <td class="num">${num(s.balance)}</td><td class="num">${num(s.quota)}</td><td class="num">${num(s.remaining)}</td>
-    <td>${obsBadge(s)}</td>
+    <td>${r.enabled===false?'<span class="badge" style="color:var(--dim)">—</span>':obsBadge(s)}</td>
     <td class="mono" style="font-size:11px">${s.observed_at?fmt.time(s.observed_at):'—'}</td>
     <td>
       <span class="res-act" data-act="edit" title="EDIT">[EDIT]</span>
