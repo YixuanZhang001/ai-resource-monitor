@@ -193,7 +193,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
   <div class="grid" style="grid-template-columns:1fr 1fr">
     <div class="sect"><div class="sect-title">COST BY PROVIDER</div><div class="panel" id="ov-provider"></div></div>
     <div class="sect"><div class="sect-title">TOKEN TREND (30D)</div><div class="trend" id="ov-trend"></div>
-      <div class="legend"><span><i style="background:var(--cyan)"></i>INPUT</span><span><i style="background:var(--yellow)"></i>OUTPUT</span></div>
+      <div class="legend"><span><i style="background:var(--cyan)"></i>INPUT</span><span><i style="background:var(--green)"></i>CACHE HIT</span><span><i style="background:var(--yellow)"></i>OUTPUT</span></div>
     </div>
   </div>
   <div class="sect" style="margin-top:16px">
@@ -209,7 +209,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
       <div>
         <div class="hint2" style="margin-bottom:8px">CACHE IMPACT · Token 分层：绿=缓存命中（按命中价计费，远低于未命中）；蓝=未命中输入；黄=输出。点击任一柱可查看当日明细。</div>
         <div class="chart-wrap"><canvas id="cache-bar"></canvas></div>
-        <div class="legend"><span><i style="background:#16a34a"></i>CACHE HIT 命中</span><span><i style="background:#4f46e5"></i>CACHE MISS 未命中</span><span><i style="background:#d97706"></i>OUTPUT 输出</span></div>
+        <div class="legend"><span><i style="background:#4f46e5"></i>CACHE MISS 未命中</span><span><i style="background:#16a34a"></i>CACHE HIT 命中</span><span><i style="background:#d97706"></i>OUTPUT 输出</span></div>
         <div id="cache-day-detail" style="display:none;margin-top:10px"></div>
       </div>
       <div>
@@ -217,8 +217,8 @@ textarea:focus{outline:none;border-color:var(--accent)}
         <div class="chart-wrap"><canvas id="usage-line"></canvas></div>
         <div class="legend" id="usage-legend">
           <span data-s="input"><i style="background:#4f46e5"></i>INPUT</span>
-          <span data-s="output"><i style="background:#d97706"></i>OUTPUT</span>
           <span data-s="cache"><i style="background:#16a34a"></i>CACHE HIT</span>
+          <span data-s="output"><i style="background:#d97706"></i>OUTPUT</span>
           <span data-s="total"><i style="background:#64748b"></i>TOTAL · 总线</span>
         </div>
       </div>
@@ -278,7 +278,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
     </div>
     <div class="sect"><div class="sect-title">INPUT / OUTPUT TREND</div>
       <div class="trend" id="token-trend" style="height:160px"></div>
-      <div class="legend"><span><i style="background:var(--cyan)"></i>INPUT</span><span><i style="background:var(--yellow)"></i>OUTPUT</span><span><i style="background:var(--green)"></i>CACHE HIT</span></div>
+      <div class="legend"><span><i style="background:var(--cyan)"></i>INPUT</span><span><i style="background:var(--green)"></i>CACHE HIT</span><span><i style="background:var(--yellow)"></i>OUTPUT</span></div>
     </div>
   </section>
 
@@ -493,8 +493,8 @@ function renderCacheCharts(rows){
     if(window._cacheBar)window._cacheBar.destroy();
     const labels=rows.map(lbl);
     window._cacheBar=new Chart(bar,{type:'bar',data:{labels,datasets:[
-      {label:'CACHE HIT 命中',data:rows.map(r=>r.cache_read_tokens||0),backgroundColor:CC.hit,stack:'s'},
       {label:'CACHE MISS 未命中',data:rows.map(r=>Math.max(0,(r.input_tokens||0)-(r.cache_read_tokens||0))),backgroundColor:CC.miss,stack:'s'},
+      {label:'CACHE HIT 命中',data:rows.map(r=>r.cache_read_tokens||0),backgroundColor:CC.hit,stack:'s'},
       {label:'OUTPUT 输出',data:rows.map(r=>r.output_tokens||0),backgroundColor:CC.out,stack:'s'}]},
       options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
         onClick:(evt,els)=>{ if(!els.length)return; showCacheDayDetail(rows[els[0].index]); },
@@ -509,8 +509,8 @@ function renderCacheCharts(rows){
     const labels=rows.map(lbl);
     const ds=[];
     if(SERIES.input) ds.push({label:'INPUT',data:rows.map(r=>r.input_tokens||0),borderColor:CC.miss,backgroundColor:CC.miss,tension:.3,pointRadius:0});
-    if(SERIES.output) ds.push({label:'OUTPUT',data:rows.map(r=>r.output_tokens||0),borderColor:CC.out,backgroundColor:CC.out,tension:.3,pointRadius:2,pointHitRadius:8});
     if(SERIES.cache) ds.push({label:'CACHE HIT',data:rows.map(r=>r.cache_read_tokens||0),borderColor:CC.hit,backgroundColor:CC.hit,tension:.3,pointRadius:0});
+    if(SERIES.output) ds.push({label:'OUTPUT',data:rows.map(r=>r.output_tokens||0),borderColor:CC.out,backgroundColor:CC.out,tension:.3,pointRadius:2,pointHitRadius:8});
     if(SERIES.total) ds.push({label:'TOTAL · 总线',data:rows.map(r=>r.total_tokens||0),borderColor:CC.total,backgroundColor:CC.total,borderDash:[6,3],tension:.3,pointRadius:0});
     window._usageLine=new Chart(line,{type:'line',data:{labels,datasets:ds},
       options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
@@ -624,7 +624,7 @@ async function renderOverview(){
     :'<div class="empty" style="margin:auto">NO DATA<br><span style="color:var(--dim);font-size:11px">No AI requests recorded yet.</span></div>';
   const tr=trend.rows||[];
   const tmax=Math.max(1,...tr.map(r=>r.total_tokens||0));
-  $('#ov-trend').innerHTML=tr.length?tr.slice(-30).map(r=>`<div class="col" title="${r.day}"><div class="cb" style="height:${((r.input_tokens||0)/tmax*100).toFixed(1)}%"></div><div class="cb out" style="height:${((r.output_tokens||0)/tmax*100).toFixed(1)}%"></div><div class="cd">${r.day.slice(5)}</div></div>`).join('')
+  $('#ov-trend').innerHTML=tr.length?tr.slice(-30).map(r=>`<div class="col" title="${r.day}"><div class="cb" style="height:${((r.input_tokens||0)/tmax*100).toFixed(1)}%"></div><div class="cb" style="height:${((r.cache_read_tokens||0)/tmax*100).toFixed(1)}%;background:var(--green)" title="缓存命中 token"></div><div class="cb out" style="height:${((r.output_tokens||0)/tmax*100).toFixed(1)}%"></div><div class="cd">${r.day.slice(5)}</div></div>`).join('')
     :'<div class="empty" style="margin:auto">NO DATA<br><span style="color:var(--dim);font-size:11px">No AI requests recorded yet.</span></div>';
   renderRecentEvents(ev.events||[]);
   renderCacheCharts(trendSeries.rows||[]);
@@ -740,7 +740,7 @@ async function renderTokens(){
     (rows.length?'':'<tr><td colspan="5"><div class="empty">NO TOKEN DATA<br><span style="color:var(--dim);font-size:11px">No AI requests recorded yet.</span></div></td></tr>')+
     '</tbody></table>';
   const tmax=Math.max(1,...tr.rows.map(r=>r.total_tokens||0));
-  $('#token-trend').innerHTML=(tr.rows||[]).slice(-30).map(r=>`<div class="col" title="${r.day}"><div class="cb" style="height:${((r.input_tokens||0)/tmax*100).toFixed(1)}%"></div><div class="cb out" style="height:${((r.output_tokens||0)/tmax*100).toFixed(1)}%"></div><div class="cb" style="height:${((r.cache_read_tokens||0)/tmax*100).toFixed(1)}%;background:var(--green)" title="缓存命中 token"></div><div class="cd">${r.day.slice(5)}</div></div>`).join('')||'<div class="empty" style="margin:auto">NO DATA<br><span style="color:var(--dim);font-size:11px">No AI requests recorded yet.</span></div>';
+  $('#token-trend').innerHTML=(tr.rows||[]).slice(-30).map(r=>`<div class="col" title="${r.day}"><div class="cb" style="height:${((r.input_tokens||0)/tmax*100).toFixed(1)}%"></div><div class="cb" style="height:${((r.cache_read_tokens||0)/tmax*100).toFixed(1)}%;background:var(--green)" title="缓存命中 token"></div><div class="cb out" style="height:${((r.output_tokens||0)/tmax*100).toFixed(1)}%"></div><div class="cd">${r.day.slice(5)}</div></div>`).join('')||'<div class="empty" style="margin:auto">NO DATA<br><span style="color:var(--dim);font-size:11px">No AI requests recorded yet.</span></div>';
 }
 
 /* ── Performance ── */
