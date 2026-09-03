@@ -294,21 +294,16 @@ class EventStore:
         )
 
     # ---------- 缓存节省估算（成本级，供 CACHE IMPACT 展示） ----------
-    # 默认缓存单价（¥ / 1M token，空闲时段）。来源：用户提供的 DeepSeek 计费表。
-    # 高峰时段 ≈ 空闲 ×2（表中 高峰/空闲 比值均为 2）。输出单价与是否命中缓存无关，
-    # 故节省只来自「输入命中」相对「输入未命中」的价差。
-    # 仅 deepseek 内置默认；其他 provider 未配置 → 跳过（savings 不计入）。
-    DEFAULT_CACHE_PRICING: dict = {
-        "deepseek": {
-            "reasoner": {"hit": 0.15, "miss": 4.5},   # 列2：deepseek-reasoner
-            "chat":     {"hit": 0.05, "miss": 1.5},   # 列1/列3：deepseek-chat
-        },
-    }
+    # 通用范式：节省 = Σ cache_read_tokens × (未命中单价 − 命中单价) / 1e6。
+    # 单价差不再内置 provider 表，而是由调用方注入 resolver
+    # (provider, model, day) -> (miss−hit, currency) | None，
+    # 数据源 = pricing_data.yaml 按日期生效版本 + 用户 config cache_pricing 覆盖。
+    # 任何 provider 只要配了 cache_hit 定价即自动计入；未配置 → 明确标注 unpriced。
+    # 输出单价与是否命中缓存无关，故节省只来自「输入命中」相对「输入未命中」的价差。
 
     @staticmethod
     def _cache_rate_for(provider, model, pricing):
-        tbl = (pricing or {}).get(provider) or \
-              EventStore.DEFAULT_CACHE_PRICING.get(provider)
+        tbl = (pricing or {}).get(provider)
         if not tbl:
             return None
         # 支持两种形态：扁平 {hit, miss}（应用于该 provider 所有模型）
@@ -323,40 +318,60 @@ class EventStore:
         return next(iter(tbl.values()))
 
     def cache_savings(self, since: Optional[float] = None,
-                      pricing: Optional[dict] = None) -> dict:
+                      cache_resolver=None) -> dict:
         """估算因缓存命中而省下的费用（vs 全部按未命中计价的反事实基线）。
 
-        节省 = Σ_model cache_read_tokens × (miss单价 − hit单价) / 1e6。
-        仅统计上报了 cache_read_tokens 的请求（其余调用本就不感知缓存）。
-        返回 {currency, total, by_provider, assumption}。
+        节省 = Σ_model,day cache_read_tokens × (miss单价 − hit单价) / 1e6。
+        单价差由 cache_resolver(provider, model, day) 提供——来自
+        pricing_data.yaml 的 effective_date 版本选择 + config cache_pricing
+        覆盖，因此：历史事件按「当天生效价」计算，不整段套用现行价；
+        任何 provider 配了 cache_hit 即计入，无 provider 硬编码。
+        时段口径：空闲档价差（高峰≈2×，结果为下界估计，由 assumption 标注）。
+        仅统计上报了 cache_read_tokens 的请求；多币种分别合计，不跨币种求和。
         """
         where, params = self._since(since)
         rows = self._query(
             f"""SELECT provider, model,
+                       date(timestamp, 'unixepoch', 'localtime') AS day,
                        COALESCE(SUM(cache_read_tokens), 0) AS cache_read
                 FROM events{where} AND cache_read_tokens IS NOT NULL
-                GROUP BY provider, model""",
+                GROUP BY provider, model, day""",
             params,
         )
-        total = 0.0
+        by_currency: dict = {}
         by_provider: dict = {}
         unpriced: list = []
         for r in rows:
-            rate = self._cache_rate_for(r["provider"], r["model"], pricing)
-            if rate is None:
+            rate = None
+            if cache_resolver is not None:
+                try:
+                    rate = cache_resolver(r["provider"], r["model"], r["day"])
+                except Exception:
+                    rate = None
+            if not rate:
                 if r["provider"] not in unpriced:
                     unpriced.append(r["provider"])
                 continue
-            saved = (r["cache_read"] / 1_000_000.0) * (rate["miss"] - rate["hit"])
-            total += saved
+            diff, currency = rate
+            saved = (r["cache_read"] / 1_000_000.0) * diff
+            by_currency[currency] = round(
+                by_currency.get(currency, 0.0) + saved, 6)
             by_provider[r["provider"]] = round(
                 by_provider.get(r["provider"], 0.0) + saved, 6)
+        # 兼容单币种展示：仅一种币种时给 total/currency；多币种不求和，total=None
+        if len(by_currency) == 1:
+            currency, total = next(iter(by_currency.items()))
+        elif not by_currency:
+            currency, total = "CNY", 0.0
+        else:
+            currency, total = None, None
         return {
-            "currency": "CNY",
-            "total": round(total, 6),
+            "currency": currency,
+            "total": total,
+            "by_currency": by_currency,
             "by_provider": by_provider,
             "unpriced": unpriced,
-            "assumption": "空闲时段单价；高峰≈2×；输出价与缓存无关；未配置单价的 provider 不计入",
+            "assumption": "按各日生效单价（空闲档）估算 · 高峰≈2× · 未配置 cache_hit 单价的模型不计入",
         }
 
     def timeseries(self, days: int = 14) -> list[dict]:
@@ -505,6 +520,56 @@ class EventStore:
                GROUP BY day ORDER BY day""",
             (since,),
         )
+
+    def tokens_series(self, start: float, end: float,
+                      granularity: str = "day") -> list[dict]:
+        """通用时间序列：任意 [start, end] 窗口 + day/hour 粒度，缺档零填充。
+
+        通用范式：只依赖 events 表的 timestamp 与 token 列，与 provider、
+        采集方式（网关捕获 / 平台账单导入）无关；同一天的网关事件与导入
+        账单事件在 day 桶内合并，因为账单本身就是该日全量流量的权威值。
+        hour 粒度用于「DAY」视图（当日按小时）；day 粒度用于 MONTH/30D。
+        """
+        if granularity not in ("day", "hour"):
+            raise ValueError(f"unsupported granularity: {granularity}")
+        sql_fmt = "%Y-%m-%d" if granularity == "day" else "%Y-%m-%d %H:00"
+        rows = self._query(
+            f"""SELECT strftime('{sql_fmt}', timestamp, 'unixepoch', 'localtime') AS bucket,
+                      COUNT(*) AS requests,
+                      COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                      COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                      COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                      COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+                      COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens
+               FROM events
+               WHERE timestamp >= ? AND timestamp <= ? AND event_type = 'llm_call'
+               GROUP BY bucket ORDER BY bucket""",
+            (float(start), float(end)),
+        )
+        by_bucket = {r["bucket"]: r for r in rows}
+        # 零填充：从 start 所在桶到 end，保证时间轴连续（无事件的日子/小时也出点）
+        from datetime import datetime, timedelta
+        cur = datetime.fromtimestamp(float(start))
+        end_dt = datetime.fromtimestamp(float(end))
+        cur = (cur.replace(hour=0, minute=0, second=0, microsecond=0)
+               if granularity == "day"
+               else cur.replace(minute=0, second=0, microsecond=0))
+        step = timedelta(days=1) if granularity == "day" else timedelta(hours=1)
+        out = []
+        while cur <= end_dt:
+            key = cur.strftime(sql_fmt)
+            base = by_bucket.get(key)
+            out.append({
+                "day": key,
+                "requests": base["requests"] if base else 0,
+                "input_tokens": base["input_tokens"] if base else 0,
+                "output_tokens": base["output_tokens"] if base else 0,
+                "total_tokens": base["total_tokens"] if base else 0,
+                "cache_read_tokens": base["cache_read_tokens"] if base else 0,
+                "cache_write_tokens": base["cache_write_tokens"] if base else 0,
+            })
+            cur += step
+        return out
 
     def resource_timeseries(self, resource_id: Optional[str] = None,
                             days: int = 30) -> list[dict]:

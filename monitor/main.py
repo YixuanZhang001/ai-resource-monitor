@@ -403,21 +403,44 @@ async def request_stream():
 # 全部基于 SQLite 聚合，分页；时间范围 range=today|7d|30d|all
 
 
+def _cache_resolver():
+    """构造缓存节省单价差 resolver：(provider, model, day) -> (miss−hit, currency)|None。
+
+    优先级：用户 config cache_pricing 覆盖 → pricing_data.yaml 按 effective_date
+    选出的当天生效价（cache_diff）。均未配置 cache_hit → None（该 provider 计入
+    unpriced，不估算）。通用范式：不绑定任何具体 provider 或数据导入方式。
+    """
+    config_pricing = {}
+    try:
+        if config_mgr is not None:
+            for name, pc in config_mgr.providers.items():
+                cp = (getattr(pc, "extra", None) or {}).get("cache_pricing")
+                if cp:
+                    config_pricing[name] = cp
+    except Exception:
+        config_pricing = {}
+
+    def resolve(provider, model, day):
+        tbl = config_pricing.get(provider)
+        if tbl:
+            rate = EventStore._cache_rate_for(provider, model,
+                                              {provider: tbl})
+            if rate:
+                return (rate["miss"] - rate["hit"], "CNY")
+        try:
+            at = time.mktime(time.strptime(day, "%Y-%m-%d")) + 12 * 3600
+        except Exception:
+            at = None
+        return pricing.cache_diff(provider, model, at)
+
+    return resolve
+
+
 @app.get("/api/overview")
 def api_overview(range: str = Query("all")):
     since = store.parse_range(range)
     ov = store.analytics_overview(since)
-    pricing = None
-    try:
-        if config_mgr is not None:
-            pricing = {}
-            for name, pc in config_mgr.providers.items():
-                cp = (getattr(pc, "extra", None) or {}).get("cache_pricing")
-                if cp:
-                    pricing[name] = cp
-    except Exception:
-        pricing = None
-    ov["cache_savings_estimate"] = store.cache_savings(since, pricing)
+    ov["cache_savings_estimate"] = store.cache_savings(since, _cache_resolver())
     return ov
 
 
@@ -440,7 +463,18 @@ def api_tokens(dim: str = Query("provider"),
 
 
 @app.get("/api/analytics/tokens/timeseries")
-def api_tokens_timeseries(days: int = Query(14, ge=1, le=90)):
+def api_tokens_timeseries(days: int = Query(14, ge=1, le=90),
+                          granularity: str = Query("day"),
+                          start: Optional[float] = Query(None),
+                          end: Optional[float] = Query(None)):
+    """通用时间序列：显式 start/end + granularity=day|hour；缺省回退旧 days 窗口。"""
+    if granularity not in ("day", "hour"):
+        return JSONResponse(status_code=400,
+                            content={"error": f"unsupported granularity: {granularity}"})
+    if start is not None or end is not None or granularity == "hour":
+        s = start if start is not None else time.time() - days * 86400
+        e = end if end is not None else time.time()
+        return {"rows": store.tokens_series(s, e, granularity)}
     return {"rows": store.tokens_timeseries(days)}
 
 

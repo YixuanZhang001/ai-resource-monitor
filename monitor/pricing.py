@@ -122,6 +122,20 @@ class PricingRegistry:
             return None
         return self._select_version(versions, at)
 
+    def cache_diff(self, provider: str, model: Optional[str],
+                   at: Optional[float] = None) -> Optional[tuple]:
+        """缓存命中相对未命中的空闲档单价差（元/1M token），按 at 选生效版本。
+
+        返回 (miss − hit, currency)；该模型未配置 cache_hit → None（不估算）。
+        通用范式：任何在 pricing_data.yaml 配了 cache_hit 的 provider/model
+        自动可用于节省估算，无需任何 provider 硬编码。
+        口径：空闲档价差（高峰价差≈2×，调用方据此标注为下界估计）。
+        """
+        price = self.get_price(provider, model, at)
+        if not price or price.cache_hit is None:
+            return None
+        return (price.input - price.cache_hit, price.currency)
+
     def is_peak(self, provider: str, at: Optional[float] = None) -> bool:
         """判断 at（UTC epoch）是否处于该 Provider 的高峰时段；未配置则 False。"""
         hours = self._peaks.get(provider) or []
