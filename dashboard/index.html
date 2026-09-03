@@ -31,6 +31,11 @@ nav a.active{color:var(--accent);background:var(--accent-soft)}
 .ranges button{padding:5px 12px;border:none;background:transparent;border-radius:7px;color:var(--dim);cursor:pointer;font-family:var(--font);font-size:12px;font-weight:500}
 .ranges button:hover{color:var(--text)}
 .ranges button.active{color:#fff;background:var(--accent)}
+.import-btn{margin-left:10px;padding:6px 14px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--text);cursor:pointer;font-family:var(--font);font-size:12px;font-weight:600;white-space:nowrap}
+.import-btn:hover{border-color:var(--accent);color:var(--accent)}
+.import-status{font-size:12px;color:var(--dim);margin-left:8px;white-space:nowrap}
+.import-status.ok{color:var(--green)}
+.import-status.err{color:#dc2626}
 
 /* layout */
 main{max-width:1200px;margin:0 auto;padding:24px}
@@ -161,6 +166,10 @@ textarea:focus{outline:none;border-color:var(--accent)}
     <button data-r="30d">30D</button>
     <button data-r="all" class="active">ALL</button>
   </div>
+  <button id="btn-import" class="import-btn" title="导入 DeepSeek 平台账单 CSV（amount + cost）">导入账单</button>
+  <input type="file" id="import-amount" accept=".csv" hidden>
+  <input type="file" id="import-cost" accept=".csv" hidden>
+  <span id="import-status" class="import-status"></span>
 </header>
 <main>
   <section class="page" id="page-overview">
@@ -1094,6 +1103,36 @@ $('#f-reset').onclick=()=>{Object.assign(reqState,{page:1,provider:'',model:'',s
 (async()=>{await loadFilters();route()})();
 /* 轮询刷新：每 45s 重新渲染当前页（不引入 WebSocket/SSE；标签页隐藏时跳过） */
 setInterval(()=>{ if(!document.hidden) render(location.hash.slice(1)||'overview'); }, 45000);
+
+/* ── 平台账单导入（DeepSeek amount + cost CSV）── */
+(function setupImport(){
+  const btn=document.getElementById('btn-import');
+  const aIn=document.getElementById('import-amount');
+  const cIn=document.getElementById('import-cost');
+  const st=document.getElementById('import-status');
+  let amountFile=null;
+  aIn.addEventListener('change',()=>{ amountFile=aIn.files[0]||null; if(amountFile) cIn.click(); });
+  cIn.addEventListener('change',async()=>{
+    const costFile=cIn.files[0];
+    if(!amountFile||!costFile){ st.textContent='需同时选择 amount 与 cost 两份 CSV'; st.className='import-status err'; return; }
+    st.textContent='导入中…'; st.className='import-status';
+    try{
+      const fd=new FormData();
+      fd.append('amount',amountFile);
+      fd.append('cost',costFile);
+      const r=await fetch('/api/import/billing-upload',{method:'POST',body:fd});
+      const j=await r.json();
+      if(!r.ok){ st.textContent='失败: '+(j.error||r.status); st.className='import-status err'; return; }
+      const res=j.result||{};
+      const bk=j.backup?(' · 备份 '+j.backup.split('/').pop()):'';
+      st.textContent='已导入 '+res.inserted+' 天 / 删除重叠 '+res.pruned_gateway+' 条 ✓'+bk;
+      st.className='import-status ok';
+      render(location.hash.slice(1)||'overview');
+    }catch(e){ st.textContent='错误: '+e.message; st.className='import-status err'; }
+    aIn.value=''; cIn.value=''; amountFile=null;
+  });
+  btn.addEventListener('click',()=>aIn.click());
+})();
 </script>
 </body>
 </html>

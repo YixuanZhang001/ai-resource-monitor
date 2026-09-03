@@ -13,6 +13,7 @@ import asyncio
 import json
 import os
 import time
+from datetime import datetime
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -21,6 +22,7 @@ import httpx
 import uvicorn
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import File, UploadFile
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -959,6 +961,80 @@ def api_set_dim_values(body: DimValuesIn):
     return {"sources": config_mgr.sources, "projects": config_mgr.projects}
 
 
+class BillingImportIn(BaseModel):
+    amount_path: str
+    cost_path: str
+    provider: str = "deepseek"
+    prune_gateway: bool = True
+
+
+def _backup_db(db_path: Path) -> Optional[str]:
+    """导入前对生产库做时间点备份（复制），返回备份路径；失败返回 None。"""
+    try:
+        import shutil
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        bak = db_path.with_suffix(f".db.bak-import-{ts}")
+        shutil.copy2(db_path, bak)
+        return str(bak)
+    except Exception:
+        return None
+
+
+@app.post("/api/import/billing")
+def api_import_billing(body: BillingImportIn):
+    """导入平台账单 CSV（amount/cost）为 llm_call 事件。生产库变更前自动备份。"""
+    amount = Path(body.amount_path)
+    cost = Path(body.cost_path)
+    if not amount.is_file() or not cost.is_file():
+        return JSONResponse(status_code=400,
+                            content={"error": "amount/cost 路径不存在"})
+    if amount.suffix.lower() != ".csv" or cost.suffix.lower() != ".csv":
+        return JSONResponse(status_code=400, content={"error": "仅支持 .csv"})
+    db_path = DATA_DIR / "monitor.db"
+    backup = _backup_db(db_path)
+    try:
+        from .billing_import import import_bills
+        res = import_bills(str(amount), str(cost), str(db_path),
+                          provider=body.provider, prune_gateway=body.prune_gateway)
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse(status_code=500,
+                            content={"error": f"导入失败: {e}", "backup": backup})
+    return {"result": res, "backup": backup}
+
+
+@app.post("/api/import/billing-upload")
+async def api_import_billing_upload(
+    amount: UploadFile = File(...),
+    cost: UploadFile = File(...),
+    provider: str = "deepseek",
+    prune_gateway: bool = True,
+):
+    """浏览器上传两份 CSV 后导入。文件落到 DATA_DIR/.import_upload/ 再走同一条链路。"""
+    if (amount.filename or "").lower().endswith(".csv") is False \
+            or (cost.filename or "").lower().endswith(".csv") is False:
+        return JSONResponse(status_code=400, content={"error": "仅支持 .csv"})
+    updir = DATA_DIR / ".import_upload"
+    updir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    amount_path = updir / f"{ts}-amount.csv"
+    cost_path = updir / f"{ts}-cost.csv"
+    try:
+        amount_path.write_bytes(await amount.read())
+        cost_path.write_bytes(await cost.read())
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse(status_code=500, content={"error": f"写入失败: {e}"})
+    db_path = DATA_DIR / "monitor.db"
+    backup = _backup_db(db_path)
+    try:
+        from .billing_import import import_bills
+        res = import_bills(str(amount_path), str(cost_path), str(db_path),
+                          provider=provider, prune_gateway=prune_gateway)
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse(status_code=500,
+                            content={"error": f"导入失败: {e}", "backup": backup})
+    return {"result": res, "backup": backup}
+
+
 # Dashboard 静态文件必须最后挂载（兜底路由）
 app.mount("/", StaticFiles(directory=DASHBOARD_DIR, html=True), name="dashboard")
 
@@ -970,4 +1046,23 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    import argparse
+
+    argv = sys.argv[1:]
+    if argv and argv[0] == "import-bills":
+        parser = argparse.ArgumentParser(prog="monitor.main import-bills")
+        parser.add_argument("--amount", required=True, help="amount-*.csv 路径")
+        parser.add_argument("--cost", required=True, help="cost-*.csv 路径")
+        parser.add_argument("--db", default=None, help="可选：DB 路径（默认 data/monitor.db）")
+        parser.add_argument("--provider", default="deepseek")
+        parser.add_argument("--no-prune", action="store_true",
+                            help="不删除同区间网关采集事件（允许重叠计数）")
+        args = parser.parse_args(argv[1:])
+        from .billing_import import import_bills
+        db_path = args.db or str(DATA_DIR / "monitor.db")
+        res = import_bills(args.amount, args.cost, db_path,
+                          provider=args.provider, prune_gateway=not args.no_prune)
+        print("import result:", res)
+    else:
+        main()
