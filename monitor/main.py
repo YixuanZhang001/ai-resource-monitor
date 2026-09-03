@@ -406,9 +406,11 @@ async def request_stream():
 def _cache_resolver():
     """构造缓存节省单价差 resolver：(provider, model, day) -> (miss−hit, currency)|None。
 
-    优先级：用户 config cache_pricing 覆盖 → pricing_data.yaml 按 effective_date
-    选出的当天生效价（cache_diff）。均未配置 cache_hit → None（该 provider 计入
-    unpriced，不估算）。通用范式：不绑定任何具体 provider 或数据导入方式。
+    优先级：pricing_data.yaml 按 effective_date 选出的当天生效价（cache_diff，
+    权威：日期感知 + 随 yaml 更新）→ 用户 config cache_pricing 覆盖（扩展点，
+    用于 yaml 未覆盖的 provider；扁平/按模型两种形态）。
+    均未配置 cache_hit → None（该 provider 计入 unpriced，不估算）。
+    通用范式：不绑定任何具体 provider 或数据导入方式。
     """
     config_pricing = {}
     try:
@@ -421,17 +423,20 @@ def _cache_resolver():
         config_pricing = {}
 
     def resolve(provider, model, day):
-        tbl = config_pricing.get(provider)
-        if tbl:
-            rate = EventStore._cache_rate_for(provider, model,
-                                              {provider: tbl})
-            if rate:
-                return (rate["miss"] - rate["hit"], "CNY")
         try:
             at = time.mktime(time.strptime(day, "%Y-%m-%d")) + 12 * 3600
         except Exception:
             at = None
-        return pricing.cache_diff(provider, model, at)
+        rate = pricing.cache_diff(provider, model, at)
+        if rate:
+            return rate
+        tbl = config_pricing.get(provider)
+        if tbl:
+            cfg_rate = EventStore._cache_rate_for(provider, model,
+                                                  {provider: tbl})
+            if cfg_rate:
+                return (cfg_rate["miss"] - cfg_rate["hit"], "CNY")
+        return None
 
     return resolve
 
