@@ -18,6 +18,10 @@ def _ts(hour: int) -> float:
     return datetime(2026, 8, 20, hour, 0, 0, tzinfo=_TZ).timestamp()
 
 
+def _ts_on(month: int, day: int, hour: int = 12) -> float:
+    return datetime(2026, month, day, hour, 0, 0, tzinfo=_TZ).timestamp()
+
+
 def test_exact_match():
     p = pricing.get_price("deepseek", "deepseek-chat")
     assert p and p.currency == "CNY" and p.input > 0
@@ -111,16 +115,19 @@ def test_v4_is_peak_boundaries():
 
 
 def test_no_cache_price_falls_back_to_input():
-    """无 cache_hit 配置的模型（deepseek-chat）不拆分 cache，沿用单输入价。"""
+    """无 cache_hit 配置的模型（gpt-4o）不拆分 cache，沿用单输入价。"""
     cost = pricing.compute_cost(
-        "deepseek", "deepseek-chat",
+        "openai", "gpt-4o",
         Usage(input_tokens=3000, output_tokens=500, cache_read_tokens=1000))
-    assert abs(cost.amount - (3000 * 2.0 + 500 * 8.0) / 1e6) < 1e-9
+    # gpt-4o: input 2.5 / output 10.0，无 cache 分价 → 全量走单输入价
+    assert abs(cost.amount - (3000 * 2.5 + 500 * 10.0) / 1e6) < 1e-9
 
 
 def test_compute_cost():
+    # 固定低峰窗口，避开 deepseek-chat 的峰谷配置影响
     cost = pricing.compute_cost("deepseek", "deepseek-chat",
-                                Usage(input_tokens=1_000_000, output_tokens=500_000))
+                                Usage(input_tokens=1_000_000, output_tokens=500_000),
+                                at=_ts(8))
     price = pricing.get_price("deepseek", "deepseek-chat")
     assert abs(cost.amount - (price.input + price.output * 0.5)) < 1e-6
     assert cost.currency == "CNY"
@@ -131,3 +138,38 @@ def test_compute_cost_missing_usage_no_fabrication():
     assert pricing.compute_cost("deepseek", "deepseek-chat", Usage()) is None
     assert pricing.compute_cost("deepseek", "unknown-model",
                                 Usage(input_tokens=1, output_tokens=1)) is None
+
+
+# ---------- 价格版本选择（effective_date） ----------
+
+def test_v4_flash_version_before_0817():
+    """08-17 前事件选旧档（命中 0.02 / 未命中 1.0 / 输出 2.0，无峰谷）。"""
+    p = pricing.get_price("deepseek", "deepseek-v4-flash", at=_ts_on(8, 10))
+    assert p is not None
+    assert p.input == 1.0 and p.output == 2.0 and p.cache_hit == 0.02
+    assert p.peak is None
+
+
+def test_v4_flash_version_after_0817():
+    """08-17 起事件选新档（峰值 0.05/1.5/4.5 + 峰谷）。"""
+    p = pricing.get_price("deepseek", "deepseek-v4-flash", at=_ts_on(8, 20))
+    assert p is not None
+    assert p.input == 1.5 and p.output == 4.5 and p.cache_hit == 0.05
+    assert p.peak == {"input": 3.0, "output": 9.0, "cache_hit": 0.10}
+
+
+def test_v4_flash_version_no_at_uses_latest():
+    """不传 at 取最新版（08-17 档），保持旧调用兼容。"""
+    p = pricing.get_price("deepseek", "deepseek-v4-flash")
+    assert p is not None and p.input == 1.5 and p.cache_hit == 0.05
+
+
+def test_v4_flash_compute_cost_respects_version():
+    """同一 usage，旧档（低峰）成本应低于新档（低峰）。"""
+    u = Usage(input_tokens=3000, output_tokens=500, cache_read_tokens=1000)
+    old = pricing.compute_cost("deepseek", "deepseek-v4-flash", u, at=_ts_on(8, 10, 8))
+    new = pricing.compute_cost("deepseek", "deepseek-v4-flash", u, at=_ts_on(8, 20, 8))
+    # 旧档：1000×0.02 + 2000×1.0 + 500×2.0 = 20+2000+1000 = 3020 → 0.00302
+    assert abs(old.amount - 0.00302) < 1e-9
+    # 新档：1000×0.05 + 2000×1.5 + 500×4.5 = 5300 → 0.0053
+    assert abs(new.amount - 0.0053) < 1e-9

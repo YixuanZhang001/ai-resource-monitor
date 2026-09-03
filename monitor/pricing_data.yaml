@@ -12,13 +12,11 @@ deepseek:
     # 2026-08-17 官方价（yuan / 1M tokens）；cache_hit 命中分价；峰谷按 peak.hours
     deepseek-chat:      { input: 1.5,  output: 4.5,  cache_hit: 0.05, peak: { input: 3.0,  output: 9.0,  cache_hit: 0.10 }, effective_date: "2026-08-17" }
     deepseek-reasoner:  { input: 4.5,  output: 13.5, cache_hit: 0.15, peak: { input: 9.0,  output: 27.0, cache_hit: 0.30 }, effective_date: "2026-08-17" }
-    # V4 定价（2026-08-17 官方公布，yuan / 1M tokens）
+    # V4 定价：2026-08-17 起峰谷双档（yuan / 1M tokens）
+    # 08-17 前单档（命中 0.02 / 未命中 1.0 / 输出 2.0，无峰谷），与平台 CSV 一致
     deepseek-v4-flash:
-      input: 1.5          # 缓存未命中，低峰
-      output: 4.5
-      cache_hit: 0.05     # 缓存命中，低峰
-      peak: { input: 3.0, output: 9.0, cache_hit: 0.10 }
-      effective_date: "2026-08-17"
+      - { input: 1.0,  output: 2.0,  cache_hit: 0.02, effective_date: "2025-01-01" }
+      - { input: 1.5,  output: 4.5,  cache_hit: 0.05, peak: { input: 3.0, output: 9.0, cache_hit: 0.10 }, effective_date: "2026-08-17" }
     deepseek-v4-pro:
       input: 4.5
       output: 13.5

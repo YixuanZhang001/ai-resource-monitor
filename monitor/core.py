@@ -88,7 +88,9 @@ class MonitorCore:
                 cache_read_tokens=event.cache_read_tokens,
                 cache_write_tokens=event.cache_write_tokens,
             )
-            cost = self.pricing.compute_cost(event.provider, event.model, usage)
+            cost = self.pricing.compute_cost(
+                event.provider, event.model, usage, at=event.timestamp
+            )
             if cost:
                 event.cost = cost.amount
                 event.currency = cost.currency

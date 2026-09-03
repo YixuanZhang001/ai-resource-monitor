@@ -47,13 +47,13 @@ class Cost:
 
 class PricingRegistry:
     def __init__(self, data_path: str | Path = DEFAULT_DATA):
-        self._prices: dict[str, dict[str, ModelPrice]] = {}
+        self._prices: dict[str, dict[str, list[ModelPrice]]] = {}
         self._peaks: dict[str, list[tuple[int, int]]] = {}
         self.reload(data_path)
 
     def reload(self, data_path: str | Path = DEFAULT_DATA) -> None:
         data = yaml.safe_load(Path(data_path).read_text(encoding="utf-8")) or {}
-        prices: dict[str, dict[str, ModelPrice]] = {}
+        prices: dict[str, dict[str, list[ModelPrice]]] = {}
         peaks: dict[str, list[tuple[int, int]]] = {}
         for provider, spec in data.items():
             spec = spec or {}
@@ -61,35 +61,66 @@ class PricingRegistry:
             # Provider 级峰谷配置：peak.hours: [[9,12],[14,18]]
             hours = (spec.get("peak") or {}).get("hours") or []
             peaks[provider] = [(int(s), int(e)) for s, e in hours]
-            models = {}
+            models: dict[str, list[ModelPrice]] = {}
             for model, p in ((spec.get("models") or {})).items():
-                p = p or {}
-                models[model] = ModelPrice(
-                    input=float(p.get("input", 0.0)),
-                    output=float(p.get("output", 0.0)),
-                    currency=currency,
-                    effective_date=str(p.get("effective_date", "")),
-                    cache_hit=(float(p["cache_hit"])
-                               if p.get("cache_hit") is not None else None),
-                    peak=p.get("peak") if isinstance(p.get("peak"), dict) else None,
-                )
+                if p is None:
+                    models[model] = []
+                    continue
+                # 支持单版本（dict）或多版本（list，按 effective_date 选价）
+                entries = p if isinstance(p, list) else [p]
+                versions: list[ModelPrice] = []
+                for e in entries:
+                    e = e or {}
+                    versions.append(ModelPrice(
+                        input=float(e.get("input", 0.0)),
+                        output=float(e.get("output", 0.0)),
+                        currency=currency,
+                        effective_date=str(e.get("effective_date", "")),
+                        cache_hit=(float(e["cache_hit"])
+                                   if e.get("cache_hit") is not None else None),
+                        peak=e.get("peak") if isinstance(e.get("peak"), dict) else None,
+                    ))
+                models[model] = versions
             prices[provider] = models
         self._prices = prices
         self._peaks = peaks
 
-    def get_price(self, provider: str, model: Optional[str]) -> Optional[ModelPrice]:
+    @staticmethod
+    def _select_version(versions: list[ModelPrice], at: Optional[float]):
+        """按事件时间戳 at 选生效版本：effective_date <= at 日期的最新版；
+        at=None 取最新版；at 早于所有版本时回退最早版（不伪造 None）。"""
+        if not versions:
+            return None
+        sorted_v = sorted(versions, key=lambda v: v.effective_date or "0000-00-00")
+        if at is None:
+            return sorted_v[-1]
+        at_date = datetime.fromtimestamp(at, tz=_CN_TZ).strftime("%Y-%m-%d")
+        chosen = None
+        for v in sorted_v:
+            if (v.effective_date or "0000-00-00") <= at_date:
+                chosen = v
+            else:
+                break
+        return chosen or sorted_v[0]
+
+    def get_price(self, provider: str, model: Optional[str],
+                  at: Optional[float] = None) -> Optional[ModelPrice]:
         if not model:
             return None
         # model 大小写归一（真实响应 deepseek-v4-flash 小写；支持 DeepSeek-V4-Flash 等）
         model = model.strip().lower()
         models = self._prices.get(provider, {})
+        versions: Optional[list[ModelPrice]] = None
         if model in models:
-            return models[model]
-        # 前缀匹配：带日期/版本后缀的模型名回退到母模型价格
-        candidates = [m for m in models if model.startswith(m)]
-        if candidates:
-            return models[max(candidates, key=len)]
-        return None
+            versions = models[model]
+        else:
+            # 前缀匹配：带日期/版本后缀的模型名回退到母模型价格
+            candidates = [m for m in models if model.startswith(m)]
+            if candidates:
+                versions = models[max(candidates, key=len)]
+        if not versions:
+            return None
+        return self._select_version(versions, at)
 
     def is_peak(self, provider: str, at: Optional[float] = None) -> bool:
         """判断 at（UTC epoch）是否处于该 Provider 的高峰时段；未配置则 False。"""
@@ -113,7 +144,7 @@ class PricingRegistry:
             return None
         if usage.input_tokens is None and usage.output_tokens is None:
             return None
-        price = self.get_price(provider, model)
+        price = self.get_price(provider, model, at)
         if not price:
             return None
 
