@@ -31,6 +31,11 @@ cred_provider = CredentialProvider()
 
 router = APIRouter()
 
+# 探活探针：GET/HEAD 裸网关路径（无真实 API 子资源，如客户端连通性探测）。
+# 命中后直接返回 200 + hint，不再转发上游（避免上游 404 被记成 llm_call error 污染 ERRORS）。
+_PROBE_PATHS = {"", "v1", "health", "healthz", "ping"}
+_PROBE_HINT = "Monitor 网关探测端点正常。真实调用请 POST /gateway/{provider}/v1/chat/completions"
+
 # 请求生命周期内注入（main.py 初始化）
 registry: ProviderRegistry
 config_mgr: ConfigManager
@@ -226,6 +231,38 @@ def _record_rejected(provider: str, model, message: str) -> None:
         pass  # 拒绝事件落库失败不应影响主拒绝响应
 
 
+def _probe_response(provider: str, path: str) -> JSONResponse:
+    """探活探针响应：200 + hint，明确这是网关探测端点而非真实调用。"""
+    p = path.strip("/")
+    return JSONResponse(status_code=200, content={
+        "monitor": True,
+        "status": "ok",
+        "provider": provider,
+        "endpoint": f"/{p}" if p else "/",
+        "hint": _PROBE_HINT,
+    })
+
+
+def _record_probe(provider: str, path: str) -> None:
+    """探活探针事件：event_type='rejected'、status 200、无 error。
+
+    不进入 Usage 统计（event_type != 'llm_call'）；也不污染 ERRORS
+    （overview / by_provider 的 errors 仅计 error 非空或 status_code >= 400）。
+    """
+    try:
+        if core is not None:
+            evt = AIRequestEvent(
+                provider=provider,
+                event_type="rejected",
+                status_code=200,
+                endpoint=f"/{path}",
+                metadata={"probe": "liveness"},
+            )
+            core.ingest(evt.to_dict())
+    except Exception:
+        pass  # 探针事件落库失败不应影响主响应
+
+
 def _event_snapshot(event: AIRequestEvent) -> dict:
     """发布给 SSE 的事件快照：仅公开字段，绝不包含 API Key/Prompt/Response。"""
     return {
@@ -257,8 +294,13 @@ async def _publish(event: AIRequestEvent, kind: str) -> None:
 
 
 @router.api_route("/gateway/{provider}/{path:path}",
-                  methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+                  methods=["GET", "HEAD", "POST", "PUT", "DELETE", "PATCH"])
 async def proxy(provider: str, path: str, request: Request):
+    # 探活探针（GET/HEAD 裸路径，无真实 API 子资源）：直接 200 + hint，
+    # 记 rejected（status 200、无 error）-> 不转发上游、不污染 ERRORS。
+    if request.method in ("GET", "HEAD") and path.strip("/") in _PROBE_PATHS:
+        _record_probe(provider, path)
+        return _probe_response(provider, path)
     cfg = config_mgr.get(provider)
     adapter = registry.get(provider)
     if not adapter:
@@ -324,6 +366,13 @@ async def proxy(provider: str, path: str, request: Request):
     if stream:
         return await _proxy_stream(adapter, event, request.method, url, headers, out_body, started)
     return await _proxy_once(adapter, event, request.method, url, headers, out_body, raw_body, started)
+
+
+@router.get("/gateway/{provider}")
+async def gateway_root(provider: str):
+    """裸网关根路径探测：/gateway/{provider}（无子路径，如客户端连通性检查）。"""
+    _record_probe(provider, "")
+    return _probe_response(provider, "")
 
 
 async def _proxy_once(adapter, event, method, url, headers, body, raw_body, started):
