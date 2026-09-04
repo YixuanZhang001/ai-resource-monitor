@@ -36,8 +36,8 @@ dev = ["pytest>=8.0", "ruff>=0.4"]
 arm = "scripts.start:main"
 
 [project.urls]
-Homepage = "https://github.com/REPLACE-WITH-YOUR-ORG/ai-resource-monitor"
-Repository = "https://github.com/REPLACE-WITH-YOUR-ORG/ai-resource-monitor"
+Homepage = "https://github.com/YixuanZhang001/ai-resource-monitor"
+Repository = "https://github.com/YixuanZhang001/ai-resource-monitor"
 
 [tool.setuptools.packages.find]
 where = ["."]
