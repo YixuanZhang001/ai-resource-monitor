@@ -26,8 +26,13 @@ Provider 协议差异全部隔离在 Adapter 层，Monitor Core 不含任何 Pro
 ## 快速开始
 
 ```bash
+# 方式一：可编辑安装（推荐，提供 `arm` 命令）
+pip install -e ".[dev]"
+arm            # 启动 Monitor 并自动打开浏览器（Dashboard: http://127.0.0.1:8787/）
+
+# 方式二：仅装运行时依赖
 pip install -r requirements.txt
-python scripts/start.py          # 启动 Monitor 并自动打开浏览器（Dashboard: http://127.0.0.1:8787/）
+python scripts/start.py          # 启动 Monitor 并自动打开浏览器
 # Windows 也可双击 start-monitor.bat；macOS / Linux 运行 ./start-monitor.sh
 ```
 
