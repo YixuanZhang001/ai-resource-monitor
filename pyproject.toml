@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-resource-monitor"
+version = "0.1.0"
+description = "Local-first, provider-agnostic AI usage ledger + analytics + dashboard: token / cost / cache / latency / error / attribution / efficiency."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "AI Resource Monitor contributors" }]
+keywords = ["ai", "llm", "monitor", "token", "cost", "cache", "observability", "local-first"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "httpx>=0.27",
+    "pydantic>=2.6",
+    "PyYAML>=6.0",
+    "python-multipart>=0.0.20",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.4"]
+
+[project.scripts]
+# 带端口冲突保护 + 自动开浏览器的启动器（README 推荐入口）
+arm = "scripts.start:main"
+
+[project.urls]
+Homepage = "https://github.com/REPLACE-WITH-YOUR-ORG/ai-resource-monitor"
+Repository = "https://github.com/REPLACE-WITH-YOUR-ORG/ai-resource-monitor"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["monitor*", "scripts*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
