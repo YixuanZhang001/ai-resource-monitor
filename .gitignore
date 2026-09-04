@@ -8,11 +8,12 @@ data/credentials.json-*
 # 数据库永不入库（含备份与 WAL）
 data/*.db
 data/*.db-*
+data/*.bak*
 data/backups/
 
 __pycache__/
 *.pyc
-.pytest_cache/
+.pyx_cache/
 .venv/
 
 # 临时诊断/运行日志（含后台服务日志），不入库
@@ -29,5 +30,4 @@ src/
 .ruff_cache/
 .coverage
 htmlcov/
-.pytest-tmp/
-
+.pytest-tmp*/

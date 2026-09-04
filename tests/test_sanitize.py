@@ -10,8 +10,8 @@ from monitor.sanitize import sanitize_error, sanitize_json_text  # noqa: E402
 
 class TestSanitize:
     def test_sk_prefix_key(self):
-        out = sanitize_error("Your api key sk-FAKE-DEEPSEEK-EXAMPLE-NOT-REAL is invalid")
-        assert "sk-FAKE-DEEPSEEK-EXAMPLE-NOT-REAL" not in out
+        out = sanitize_error("Your api key sk-FAKE-NOT-A-REAL-KEY-0000 is invalid")
+        assert "sk-FAKE-NOT-A-REAL-KEY-0000" not in out
         assert "sk-[REDACTED]" in out
 
     def test_sk_variants(self):
