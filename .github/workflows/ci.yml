@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Test (per-file isolation)
+        # 已知 gateway 模块在 import 期缓存 config_mgr/core/resources 等引用，
+        # 全量套件顺序相关 flaky；逐文件独立进程运行（已本地验证 100% 全绿）。
+        shell: bash
+        run: |
+          fail=0
+          for f in tests/test_*.py; do
+            python -m pytest "$f" -q || fail=1
+          done
+          exit $fail

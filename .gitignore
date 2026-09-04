@@ -29,4 +29,5 @@ src/
 .ruff_cache/
 .coverage
 htmlcov/
+.pytest-tmp/
 
